@@ -5,3 +5,19 @@
 // virtual manifest generated in memory.
 
 export const ssrPages: Record<string, () => Promise<{ default: unknown }>> = {};
+
+export const ssrLayouts: Record<string, () => Promise<{ default: unknown }>> = {};
+
+export const allEntries: string[] = [];
+
+export const layoutEntries: string[] = [];
+
+export const clientEntries: string[] = [];
+
+export const staticEntries: string[] = [];
+
+export function hasClient(_entryName: string): boolean {
+  return true;
+}
+
+void hasClient;

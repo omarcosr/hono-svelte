@@ -1,10 +1,11 @@
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { getIds } from "../src/ids.js";
 import { MANIFEST_RESOLVED, MANIFEST_ID, ENTRY_PREFIX } from "../src/virtual.js";
 import { pages } from "../src/vite.js";
-
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function makePlugin() {
@@ -58,5 +59,61 @@ describe("pages() plugin", () => {
   it("missing entry fails with a clear error", () => {
     const plugin = makePlugin();
     expect(() => plugin.load(String.fromCharCode(0) + ENTRY_PREFIX + "missing")).toThrowError(/no page found/);
+  });
+
+  it("types() returns the entry union", () => {
+    expect(makePlugin().types()).toBe('"admin" | "home"');
+  });
+
+  it("typeDeclarations() emits the hono module snippet", () => {
+    const decl = makePlugin().typeDeclarations();
+    expect(decl).toContain("HonoSvelteEntries");
+    expect(decl).toContain('declare module "hono"');
+    expect(decl).toContain('"admin" | "home"');
+  });
+
+  it("virtual manifest lists all entries", () => {
+    const manifest = makePlugin().load(MANIFEST_RESOLVED) as string;
+    expect(manifest).toContain('allEntries = ["admin","home"]');
+    expect(manifest).toContain("__allEntries");
+  });
+
+  it("validateConfig() fails on missing svelte plugin", () => {
+    const plugin = makePlugin();
+    plugin.configResolved({ root: "/x", plugins: [], mode: "client" } as never);
+    expect(() => plugin.validateConfig!()).toThrowError(/svelte plugin/);
+  });
+
+  it("nested layouts resolve chains without becoming entries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-nested-"));
+    try {
+      mkdirSync(join(dir, "nested"), { recursive: true });
+      writeFileSync(join(dir, "nested", "layout.svelte"), "<div><slot /></div>\n");
+      writeFileSync(join(dir, "nested", "page.svelte"), "<script>let x = 1;</script><p>{x}</p>\n");
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      expect(plugin.entries()).toEqual(["nested/page"]);
+      expect(plugin.layouts()).toEqual(["nested/layout"]);
+      expect(plugin.layoutChain("nested/page")).toEqual(["nested/layout"]);
+      const manifest = plugin.load(MANIFEST_RESOLVED) as string;
+      expect(manifest).toContain("nested/layout");
+      const code = plugin.load(
+        String.fromCharCode(0) + ENTRY_PREFIX + "nested/page",
+      ) as string;
+      expect(code).toContain("Layout0");
+      expect(code).toContain("data-hs-outlet");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("layouts:false restores legacy ignore behavior", () => {
+    const plugin = pages({ pagesDir: "test/fixtures/pages", layouts: false });
+    plugin.configResolved({ root: pkgRoot } as never);
+    plugin.buildStart();
+    expect(plugin.entries()).toEqual(["admin", "home"]);
+    expect(plugin.layouts()).toEqual([]);
+    expect(plugin.layoutChain("admin")).toEqual([]);
   });
 });

@@ -1,11 +1,45 @@
 import type { Next } from "hono";
 import type { Component } from "svelte";
+import {
+  createManifestAssets,
+  manifestCssFor,
+  manifestImportsFor,
+  type AssetsResolver,
+  type ViteManifest,
+} from "./assets.js";
+import { notFoundHandler, errorHandler } from "./handlers.js";
+import { renderHead, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
-import { ssrPages as autoSsrPages } from "./ssr-manifest.js";
+import {
+  allEntries as autoAllEntries,
+  ssrLayouts as autoSsrLayouts,
+  ssrPages as autoSsrPages,
+} from "./ssr-manifest.js";
 import { devEntryUrl } from "./virtual.js";
 
 export { getIds } from "./ids.js";
 export type { SharedIds } from "./ids.js";
+export { renderHead } from "./head.js";
+export type { HeadMetaItem, HeadProps } from "./head.js";
+export {
+  CACHE_IMMUTABLE,
+  CACHE_NO_STORE,
+  createManifestAssets,
+  immutableHeaders,
+  manifestCssFor,
+  manifestImportsFor,
+  manifestKeysFor,
+} from "./assets.js";
+export type {
+  AssetsResolver,
+  ManifestAssetsOptions,
+  ViteManifest,
+  ViteManifestChunk,
+} from "./assets.js";
+export { notFoundHandler, errorHandler } from "./handlers.js";
+export type { ErrorPageOptions, ServerErrorHandlerOptions } from "./handlers.js";
+export { initFiles, doctorChecks, checkAppLink, versionsMatch, isSafeAppPath } from "./scaffold.js";
+export type { DoctorIssue, DoctorOptions, InitFile } from "./scaffold.js";
 
 // Template rule (server -> svelte):
 // - data: small, public, and serializable - embedded in the initial HTML
@@ -26,17 +60,69 @@ export type SsrPageLoader = () => Promise<{ default: unknown }>;
 export type RenderProps = {
   title?: string;
   data?: Record<string, unknown>;
+  /** HTTP status of the shell response. @default 200 */
+  status?: number;
+  /** Extra response headers merged into the shell response. */
+  headers?: Record<string, string>;
+  /** Per-page head tags, merged after the shell `head` option. */
+  head?: string | HeadProps;
 };
+
+export type PrefetchMode = false | "hover" | "all";
 
 export type ShellOptions = {
   title?: string;
   lang?: string;
   assetsBase?: string;
+  /**
+   * Resolve the client JS URL for an entry.
+   * - String: base prefix (`/static` -> `/static/<entry>.js`).
+   * - Vite manifest object or resolver function: hashed files.
+   * @default "/static"
+   */
+  assets?: string | ViteManifest | AssetsResolver;
+  /** Extra CSS links per HTML response. Strings are hrefs verbatim. */
+  styles?: string[];
   stylesHref?: string | ((isProd: boolean) => string);
+  /** Global head HTML (fonts, meta) — page `head` prop is appended after it. */
   head?: string;
-  /** Manual override of the entryName -> loader map (optional; otherwise the shell
-   *  resolves the map automatically via ssr-manifest). */
+  /**
+   * CSP nonce applied to `<script>`, `<link>` and `<style data-hs>` tags
+   * emitted by the shell. Pass a per-request nonce string or a function
+   * reading it from the Hono context (e.g. set by `secureHeaders()`).
+   */
+  nonce?: string | ((c: unknown) => string | undefined);
+  /**
+   * `<link rel="modulepreload">` for the current entry (+ its manifest
+   * imports). @default true in prod, false in dev.
+   */
+  preload?: boolean;
+  /** Prefetch other client entries. @default false */
+  prefetch?: PrefetchMode;
+  /**
+   * Warn once when serialized `data` exceeds this many bytes.
+   * @default 102400 (100KB). Set to `false` to disable.
+   */
+  dataLimit?: number | false;
+  /** Manual override of the entryName -> loader map (otherwise resolved via ssr-manifest). */
   ssrPages?: Record<string, SsrPageLoader>;
+  /**
+   * Known entry names. When set (or auto-detected from the manifest),
+   * unknown entries throw a dev-friendly error listing available pages.
+   * In production the error message is generic.
+   */
+  knownEntries?: string[];
+  /** `false` disables unknown-entry validation. @default true */
+  strict?: boolean;
+  /** Default status when `c.render(entry)` omits it. @default 200 */
+  status?: number;
+  /** Default headers merged into every shell response. */
+  headers?: Record<string, string>;
+  /**
+   * Force prod/dev asset behavior. Defaults to auto-detect
+   * (`import.meta.env.PROD`, else `NODE_ENV === "production"`).
+   */
+  isProd?: boolean;
 };
 
 export type ShellContext = {
@@ -57,18 +143,138 @@ function isValidEntryName(entryName: string): boolean {
   );
 }
 
-function serializePageData(data: Record<string, unknown> | undefined, dataId: string): string {
-  if (!data) return "";
+function nonceAttr(nonce: string | undefined): string {
+  return nonce ? ` nonce="${escapeAttr(nonce)}"` : "";
+}
+
+function serializePageData(
+  data: Record<string, unknown> | undefined,
+  dataId: string,
+  dataLimit: number | false,
+): { json: string; html: string } {
+  if (!data) return { json: "", html: "" };
   let json: string;
   try {
     json = JSON.stringify(data);
   } catch {
     throw new Error("hono-svelte: props.data must be JSON-serializable");
   }
-  if (json === undefined) return "";
-  json = json.replace(/</g, "\\u003c");
+  if (json === undefined) return { json: "", html: "" };
+  checkDataLimit(json, dataLimit);
+  const safe = json.replace(/</g, "\\u003c");
   const lt = String.fromCharCode(60);
-  return lt + 'script type="application/json" id="' + dataId + '">' + json + lt + "/script>";
+  return {
+    json,
+    html: lt + 'script type="application/json" id="' + dataId + '">' + safe + lt + "/script>",
+  };
+}
+
+const warnedDataLimit = new Set<string>();
+
+function checkDataLimit(json: string, dataLimit: number | false): void {
+  if (dataLimit === false) return;
+  const bytes = new TextEncoder().encode(json).length;
+  if (bytes <= dataLimit) return;
+  const key = String(dataLimit);
+  if (warnedDataLimit.has(key)) return;
+  warnedDataLimit.add(key);
+  const kb = (bytes / 1024).toFixed(1);
+  const limitKb = (dataLimit / 1024).toFixed(0);
+  console.warn(
+    `[hono-svelte] page data is ${kb}KB (limit ${limitKb}KB). ` +
+      `data is inlined in the HTML — move large/sensitive payloads to a typed API (hc<AppType>).`,
+  );
+}
+
+/** Visible for tests. */
+export function __resetDataLimitWarned(): void {
+  warnedDataLimit.clear();
+}
+
+type EnvProbe = { env?: { PROD?: boolean; DEV?: boolean } };
+
+function detectProd(): boolean {
+  try {
+    const meta = import.meta as unknown as EnvProbe;
+    if (meta.env?.PROD !== undefined) return meta.env.PROD;
+  } catch {
+    // ignore — non-Vite runtimes
+  }
+  return (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV === "production";
+}
+
+function isDev(): boolean {
+  try {
+    const meta = import.meta as unknown as EnvProbe;
+    if (meta.env?.DEV !== undefined) return meta.env.DEV;
+  } catch {
+    // ignore
+  }
+  return (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV !== "production";
+}
+
+function defaultKnownEntries(ssrPages: Record<string, SsrPageLoader>): string[] | undefined {
+  const keys = Object.keys(ssrPages);
+  if ((ssrPages as { __allEntries?: unknown }).__allEntries !== undefined) {
+    return (ssrPages as unknown as { __allEntries: string[] }).__allEntries;
+  }
+  return keys.length > 0 ? keys : undefined;
+}
+
+function renderNotFoundHint(available: string[] | undefined, prod: boolean): string {
+  if (prod || !available || available.length === 0) {
+    return "hono-svelte: unknown entry (check pagesDir and the entryName passed to c.render)";
+  }
+  const list = [...available].sort().slice(0, 20).join('", "');
+  const more = available.length > 20 ? ` (+${available.length - 20} more)` : "";
+  return `hono-svelte: unknown entry. Available pages: "${list}"${more}`;
+}
+
+function resolveAssetUrl(
+  assets: string | ViteManifest | AssetsResolver | undefined,
+  assetsBase: string,
+  entryName: string,
+): string {
+  const resolver: AssetsResolver =
+    typeof assets === "function"
+      ? assets
+      : typeof assets === "object" && assets !== null
+        ? createManifestAssets(assets)
+        : (entry) => `${assetsBase}/${entry}.js`;
+  return resolver(entryName);
+}
+
+function manifestFor(assets: string | ViteManifest | AssetsResolver | undefined): ViteManifest | undefined {
+  return typeof assets === "object" && assets !== null ? (assets as ViteManifest) : undefined;
+}
+
+function prefetchUrls(
+  mode: PrefetchMode,
+  entryName: string,
+  allEntries: string[] | undefined,
+  resolveUrl: (entry: string) => string,
+): string[] {
+  if (!mode || !allEntries) return [];
+  if (mode === "all") return allEntries.filter((e) => e !== entryName).map(resolveUrl);
+  return [];
+}
+
+function prefetchHoverScript(
+  nonce: string | undefined,
+  dataId: string,
+  urls: { entry: string; url: string }[],
+): string {
+  if (urls.length === 0) return "";
+  const lt = String.fromCharCode(60);
+  const map = JSON.stringify(Object.fromEntries(urls.map((u) => [u.entry, u.url])));
+  const code =
+    `(function(){var m=${map};` +
+    `function pre(u){if(document.querySelector('link[rel=\"prefetch\"][href=\"'+u+'\"]'))return;` +
+    `var l=document.createElement('link');l.rel='prefetch';l.href=u;document.head.appendChild(l);}` +
+    `document.addEventListener('mouseover',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;` +
+    `if(!a)return;try{var p=new URL(a.href,location.origin).pathname.replace(/^\\//,'');` +
+    `var u=m[p];if(u)pre(u);}catch(_){}},{passive:true});})();`;
+  return lt + `script${nonceAttr(nonce)}>${code}` + lt + "/script>";
 }
 
 
@@ -76,7 +282,13 @@ export function shell(options: ShellOptions = {}) {
   const titleDefault = options.title ?? "App";
   const lang = options.lang ?? "en";
   const assetsBase = (options.assetsBase ?? "/static").replace(/\/$/, "");
+  const assetsOpt = options.assets ?? assetsBase;
   const head = options.head ?? "";
+  const defaultStatus = options.status ?? 200;
+  const defaultHeaders = options.headers ?? {};
+  const dataLimit = options.dataLimit ?? 102400;
+  const strict = options.strict ?? true;
+  const extraStyles = options.styles ?? [];
   const resolveStyles =
     typeof options.stylesHref === "function"
       ? options.stylesHref
@@ -84,52 +296,197 @@ export function shell(options: ShellOptions = {}) {
   // Zero config: with pages() active, this module is redirected to the
   // in-memory manifest by the plugin's resolveId (enforce: "pre").
   const ssrPages = options.ssrPages ?? autoSsrPages;
+  const ssrLayouts: Record<string, SsrPageLoader> =
+    (ssrPages as unknown as { __layouts?: Record<string, SsrPageLoader> }).__layouts ??
+    (autoSsrLayouts as Record<string, SsrPageLoader>);
+  const staticKnown =
+    options.knownEntries ??
+    (autoAllEntries.length > 0 ? [...autoAllEntries] : undefined) ??
+    defaultKnownEntries(ssrPages);
 
-  return async function shellMiddleware(c: any, next: Next) {
+  function availableEntries(): string[] | undefined {
+    if (staticKnown) return staticKnown;
+    return defaultKnownEntries(ssrPages);
+  }
+
+  function layoutChainFor(entryName: string): string[] {
+    if (entryName === "layout" || entryName.endsWith("/layout")) return [];
+    const layouts = Object.keys(ssrLayouts);
+    if (layouts.length === 0) return [];
+    const chain: string[] = [];
+    const parts = entryName.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const layout = parts.slice(0, i).join("/") + "/layout";
+      if (layouts.includes(layout)) chain.push(layout);
+    }
+    if (layouts.includes("layout")) chain.unshift("layout");
+    return chain;
+  }
+
+  function resolveNonce(c: unknown): string | undefined {
+    if (typeof options.nonce === "function") {
+      try {
+        return options.nonce(c) ?? undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    return options.nonce;
+  }
+
+  async function renderSsrBody(
+    loader: SsrPageLoader,
+    pageData: Record<string, unknown> | undefined,
+    nonce: string | undefined,
+    layoutChain: SsrPageLoader[],
+  ): Promise<{ html: string; head: string }> {
+    const mod = await loader();
+    const { render } = await import("svelte/server");
+    const renderOpts: Record<string, unknown> = {};
+    if (pageData !== undefined) renderOpts.props = pageData;
+    if (nonce) renderOpts.csp = { nonce };
+    const rendered = render(mod.default as Component, renderOpts) as {
+      html?: string;
+      body?: string;
+      head?: string | (() => string);
+    };
+    let html = rendered.html ?? rendered.body ?? "";
+    let headValue = typeof rendered.head === "function" ? rendered.head() : (rendered.head ?? "");
+    if (layoutChain.length > 0) {
+      const { createRawSnippet } = await import("svelte");
+      for (const layoutLoader of layoutChain) {
+        const layoutMod = await layoutLoader();
+        const childHtml = html;
+        const childSnippet = createRawSnippet(() => ({ render: () => childHtml }));
+        const wrapped = render(layoutMod.default as Component, {
+          ...(pageData !== undefined ? { props: pageData } : {}),
+          props: { ...(pageData ?? {}), children: childSnippet },
+          ...(nonce ? { csp: { nonce } } : {}),
+        }) as { html?: string; body?: string; head?: string | (() => string) };
+        html = wrapped.html ?? wrapped.body ?? "";
+        const layoutHead =
+          typeof wrapped.head === "function" ? wrapped.head() : (wrapped.head ?? "");
+        headValue = layoutHead + headValue;
+      }
+    }
+    return { html, head: headValue };
+  }
+
+  async function inner(c: any, next: Next) {
     c.setRenderer(async (entryName: string, props?: RenderProps) => {
       if (!isValidEntryName(entryName)) {
         throw new Error(`hono-svelte: invalid entryName: ${JSON.stringify(entryName)}`);
       }
+      const loader: SsrPageLoader | undefined = ssrPages[entryName];
+      const isSsr = loader !== undefined;
+      if (strict && !isSsr) {
+        const known = availableEntries();
+        if (known && !known.includes(entryName)) {
+          const dev = isDev();
+          throw new Error(`${renderNotFoundHint(known, !dev)} (got ${JSON.stringify(entryName)})`);
+        }
+      }
       const ids = getIds(entryName);
       const title = props?.title ?? titleDefault;
-      const isProd = (import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD ?? false;
+      const isProd = options.isProd ?? detectProd();
+      const nonce = resolveNonce(c);
+      const nAttr = nonceAttr(nonce);
       const stylesHref =
         resolveStyles(isProd) ?? (isProd ? "/static/styles.css" : "/src/styles.css");
-      const dataHtml = props?.data ? serializePageData(props.data, ids.dataId) : "";
+      const { html: dataHtml } = serializePageData(props?.data, ids.dataId, dataLimit);
       const lt = String.fromCharCode(60);
-
-      const loader: SsrPageLoader | undefined = ssrPages[entryName];
 
       let bodyHtml = "";
       let ssrHead = "";
-      if (loader !== undefined) {
-        const mod = await loader();
-        const { render } = await import("svelte/server");
-        const rendered = render(mod.default as Component) as { html: string; head?: string };
+      if (isSsr) {
+        const chain = layoutChainFor(entryName)
+          .map((l) => ssrLayouts[l])
+          .filter((l): l is SsrPageLoader => l !== undefined);
+        const rendered = await renderSsrBody(loader as SsrPageLoader, props?.data, nonce, chain);
         bodyHtml = rendered.html;
-        ssrHead = rendered.head ?? "";
+        ssrHead = rendered.head;
       }
 
+      const resolveUrl = (entry: string): string =>
+        isProd ? resolveAssetUrl(assetsOpt, assetsBase, entry) : devEntryUrl(entry);
+
       let scriptHtml = "";
-      if (loader === undefined) {
-        const src = isProd ? `${assetsBase}/${entryName}.js` : devEntryUrl(entryName);
-        scriptHtml = lt + `script type="module" src="${escapeAttr(src)}">` + lt + "/script>";
+      let preloadHtml = "";
+      let prefetchHtml = "";
+      if (!isSsr) {
+        const src = resolveUrl(entryName);
+        scriptHtml = lt + `script type="module" src="${escapeAttr(src)}"${nAttr}>` + lt + "/script>";
+        const shouldPreload = options.preload ?? isProd;
+        const manifest = isProd ? manifestFor(assetsOpt) : undefined;
+        if (shouldPreload) {
+          const urls = [src];
+          if (manifest) {
+            for (const imp of manifestImportsFor(manifest, entryName)) {
+              if (!urls.includes(imp)) urls.push(imp);
+            }
+          }
+          preloadHtml = urls
+            .map((u) => lt + `link rel="modulepreload" href="${escapeAttr(u)}"${nAttr} />`)
+            .join("");
+        }
+        if (isProd && options.prefetch) {
+          const known = availableEntries();
+          if (options.prefetch === "all" && known) {
+            for (const u of prefetchUrls("all", entryName, known, resolveUrl)) {
+              prefetchHtml += lt + `link rel="prefetch" href="${escapeAttr(u)}"${nAttr} />`;
+            }
+          } else if (options.prefetch === "hover" && known) {
+            const others = known.filter((e) => e !== entryName && ssrPages[e] === undefined);
+            prefetchHtml = prefetchHoverScript(
+              nonce,
+              ids.dataId,
+              others.map((e) => ({ entry: e, url: resolveUrl(e) })),
+            );
+          }
+        }
       }
+
+      const status = props?.status ?? defaultStatus;
+      const headers = { ...defaultHeaders, ...(props?.headers ?? {}) };
+      const pageHead = props?.head !== undefined ? renderHead(props.head) : "";
+      const manifestNow = isProd ? manifestFor(assetsOpt) : undefined;
+      const cssLinks =
+        (manifestNow ? manifestCssFor(manifestNow, entryName) : [])
+          .map((href) => lt + `link rel="stylesheet" href="${escapeAttr(href)}"${nAttr} />`)
+          .join("") +
+        extraStyles
+          .map((href) => lt + `link rel="stylesheet" href="${escapeAttr(href)}"${nAttr} />`)
+          .join("");
 
       return c.html(
         `<!doctype html><html lang="${escapeAttr(lang)}"><head><title>${escapeAttr(title)}</title>` +
           `<meta charset="utf-8" /><meta content="width=device-width, initial-scale=1" name="viewport" />` +
           (head ? head : "") +
-          `<link rel="stylesheet" href="${escapeAttr(stylesHref)}" />` +
+          `<link rel="stylesheet" href="${escapeAttr(stylesHref)}"${nAttr} />` +
+          cssLinks +
           ssrHead +
+          pageHead +
+          preloadHtml +
+          prefetchHtml +
           scriptHtml +
           `</head>` +
           `<body class="bg-base-200 min-h-screen text-base-content"><div id="${ids.rootId}">${bodyHtml}</div>` +
           dataHtml +
           `</body></html>`,
+        status,
+        headers,
       );
     });
 
     await next();
+  }
+
+  async function shellMiddleware(c: any, next: Next) {
+    return inner(c, next);
+  }
+  const mw = shellMiddleware as typeof inner & {
+    availableEntries: () => string[] | undefined;
   };
+  mw.availableEntries = availableEntries;
+  return mw;
 }

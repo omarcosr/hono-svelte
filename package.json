@@ -3,6 +3,9 @@
   "version": "0.3.1",
   "description": "Server-side shell + multi-entry Svelte pages for Hono apps",
   "type": "module",
+  "bin": {
+    "hono-svelte": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

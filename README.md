@@ -119,26 +119,95 @@ Files starting with `_` and `layout.svelte` are ignored (convention for partials
 
 ## Passing data to the page
 
-Small, public initial data (plan name, title, preferences) goes in `data` and arrives via `$props()` — no extra request:
+Small, public initial data (plan name, title, preferences) goes in `data` and arrives via `$props()` — no extra request.
+Works for static (zero-JS) pages too: the shell passes `data` as SSR props **and** embeds the JSON for hydration:
 
 ```ts
 app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
 ```
 
+Large payloads trigger a one-time `console.warn` (default limit 100KB, `shell({ dataLimit })`).
+Anything sensitive stays in the API (`hc<AppType>`, HttpOnly cookie). Never put secrets in `data`.
+
+## Status, headers and per-page head
+
+```ts
+app.get("/old", (c) => c.render("gone", { status: 410, headers: { "X-Gone": "1" } }));
+
+app.get("/post", (c) =>
+  c.render("post", {
+    head: {
+      description: "A post about islands",
+      canonical: "https://example.com/post",
+      og: { title: "Islands", image: "https://example.com/og.png" },
+      twitter: { card: "summary_large_image" },
+    },
+  }),
+);
+```
+
+`<svelte:head>` inside pages also works (shell forwards SSR `head`). Page `head` never emits executable inline scripts (CSP-safe; `extra` is for trusted raw HTML like fonts or JSON-LD).
+
+## Nested layouts
+
+`<dir>/layout.svelte` wraps every page under `<dir>/` (SSR inside-out, outermost first). A root `layout.svelte` wraps everything. Layouts receive `children` plus all page `data` as props:
+
+```svelte
+<!-- src/pages/dashboard/layout.svelte -->
+<script lang="ts">
+  import type { Snippet } from "svelte";
+  let { children }: { children: Snippet } = $props();
+</script>
+
+<div class="layout">{@render children()}</div>
+```
+
+Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect them; `layouts: false` restores legacy ignore).
+
+
+## Error pages
+
+```ts
+import { errorHandler, notFoundHandler } from "hono-svelte";
+
+app.notFound(notFoundHandler()); // renders `404.svelte` with status 404
+app.onError(errorHandler()); // renders `500.svelte` with status 500
+```
+
+## CLI
+
+```sh
+npx hono-svelte init                  # scaffold src/pages, vite.config.ts, env.d.ts
+npx hono-svelte doctor                # check dist, link and vite config
+npx hono-svelte doctor --app=./my-app # check another app directory
+```
 
 ## API
 
 ### `shell(options?)`
 
-Hono middleware that provides `c.render(entry, { title?, data? })` on every route.
+Hono middleware that provides `c.render(entry, { title?, data?, status?, headers?, head? })` on every route.
 
 | Option | Default | Description |
 |---|---|---|
 | `title` | `"App"` | Title used when the route doesn't provide one |
 | `lang` | `"en"` | `<html>` `lang` attribute |
-| `assetsBase` | `"/static"` | Prefix for JS files in production |
+| `assetsBase` | `"/static"` | Prefix for JS files in production (legacy; prefer `assets`) |
+| `assets` | `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url` (hashed files) |
+| `isProd` | auto | Force prod/dev asset behavior |
 | `stylesHref` | `"/static/styles.css"` in prod, `"/src/styles.css"` in dev | Global stylesheet (or an `(isProd) => string` function) |
+| `styles` | `[]` | Extra CSS hrefs emitted per response |
 | `head` | `""` | Extra HTML in `<head>` (fonts, meta tags) |
+| `nonce` | — | CSP nonce string or `(c) => string` (applied to shell `<script>`/`<link>`) |
+| `preload` | `true` in prod | `<link rel="modulepreload">` for the entry (+ manifest imports) |
+| `prefetch` | `false` | `"all"` prefetches other entries; `"hover"` injects a hover-prefetch script |
+| `dataLimit` | `102400` | Warn once above this many `data` bytes (`false` disables) |
+| `status` | `200` | Default response status |
+| `headers` | `{}` | Default response headers (per-render `headers` merge over them) |
+| `strict` | `true` | Unknown entries throw a dev-friendly error; `false` disables |
+| `knownEntries` | auto from manifest | Override the page list used by strict mode and prefetch |
+
+`shell()` also exposes `availableEntries()` for diagnostics.
 
 ### `pages(options?)`
 
@@ -147,10 +216,11 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 | Option | Default | Description |
 |---|---|---|
 | `pagesDir` | `"src/pages"` | Pages folder |
-| `ignore` | `["**/layout.svelte", "**/_*.svelte"]` | Ignored patterns |
+| `ignore` | `["**/_*.svelte"]` | Ignored patterns (`layout.svelte` is a layout, not a page) |
+| `layouts` | `true` | Nested `<dir>/layout.svelte` support (`false` = legacy ignore) |
 | `alwaysClient` | `[]` | Pages that always get JS, even without `<script>` |
 
-Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`.
+Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `types()` (entry union), `typeDeclarations()` (hono module snippet), `validateConfig()` (fail fast on bad Vite setup).
 
 ### Typing `c.render`
 
@@ -166,10 +236,13 @@ declare module "hono" {
 }
 ```
 
+Or generate the entry union from the plugin: `pages().types()` → `"admin" | "home"`, and `pages().typeDeclarations()` for the full module snippet.
+
 ## Production tips
 
-- Serve hashed files with long cache and `immutable`; the stylesheet with short cache or a versioned name.
-- Works with `script-src 'self'` — there is no executable inline script on the page.
+- Pass the Vite manifest to `shell({ assets: manifest })` for hashed files; manifest CSS and shared chunks are emitted automatically (`modulepreload`).
+- Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
+- CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
 - Run both client and server builds before serving; the example in `examples/playground/` shows the full setup.
 
 ## Example
