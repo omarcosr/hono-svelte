@@ -150,17 +150,33 @@ app.get("/post", (c) =>
 
 ## Nested layouts
 
-`<dir>/layout.svelte` wraps every page under `<dir>/` (SSR inside-out, outermost first). A root `layout.svelte` wraps everything. Layouts receive `children` plus all page `data` as props:
+`<dir>/layout.svelte` wraps every page under `<dir>/` (SSR inside-out, outermost first). A root `layout.svelte` wraps everything. Layouts receive `children` plus all page `data` as props — e.g. `title`/`description` passed via `c.render(entry, { data })`:
 
 ```svelte
 <!-- src/pages/dashboard/layout.svelte -->
 <script lang="ts">
   import type { Snippet } from "svelte";
-  let { children }: { children: Snippet } = $props();
+  type Props = { title?: string; description?: string; children: Snippet };
+  let { title = "Dashboard", description = "", children }: Props = $props();
 </script>
 
-<div class="layout">{@render children()}</div>
+<div class="layout">
+  <h1>{title}</h1>
+  {@render children()}
+</div>
 ```
+
+```ts
+// routes/dashboard/page1.ts — layout data comes from the route, not the page
+c.render("dashboard/page1", { data: { title: "Page 1", description: "..." } });
+```
+
+```svelte
+<!-- src/pages/dashboard/page1.svelte — content only, NO layout import -->
+<section class="card">Page 1 content</section>
+```
+
+> Pages must NOT import their layout manually — the shell applies it automatically. The plugin fails fast at build time (`manually imports ... but the layout is applied automatically`) instead of rendering `<main><div><main>` twice.
 
 Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect them; `layouts: false` restores legacy ignore).
 

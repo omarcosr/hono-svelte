@@ -2,12 +2,12 @@
   import type { Snippet } from "svelte";
 
   type Props = {
-    title: string;
-    description: string;
+    title?: string;
+    description?: string;
     children: Snippet;
   };
 
-  let { title, description, children }: Props = $props();
+  let { title = "Dashboard", description = "", children }: Props = $props();
 </script>
 
 <main class="bg-base-200 px-4 sm:px-6 py-8 lg:py-12 min-h-dvh">

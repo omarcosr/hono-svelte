@@ -1,7 +1,6 @@
 <script lang="ts">
   import { hc } from "hono/client";
   import type { AppType } from "../routes";
-  import DashboardLayout from "./dashboard/layout.svelte";
 
   type PageData = { demo?: boolean };
   let { demo }: PageData = $props();
@@ -48,10 +47,6 @@
   }
 </script>
 
-<DashboardLayout
-  title="Your space is ready."
-  description="The session is active. Use the examples below to try client-side state and an authenticated call to the server."
->
   <div class="gap-6 grid lg:grid-cols-2">
     <section class="bg-base-100 shadow-sm card-border card">
       <div class="gap-6 card-body">
@@ -134,5 +129,5 @@
       </div>
     </section>
   </div>
-</DashboardLayout>
+
 

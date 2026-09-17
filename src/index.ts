@@ -301,8 +301,13 @@ export function shell(options: ShellOptions = {}) {
   // Zero config: with pages() active, this module is redirected to the
   // in-memory manifest by the plugin's resolveId (enforce: "pre").
   const ssrPages = options.ssrPages ?? autoSsrPages;
+  // NOTE: `p` in the bundle below is the layouts map. It must come from the
+  // VIRTUAL manifest (ssrPages.__layouts), never from the stub — the stub's
+  // ssrLayouts is always {}. When the caller passes a manual ssrPages map,
+  // __layouts travels on the same object (see vite.ts manifestSource).
   const ssrLayouts: Record<string, SsrPageLoader> =
     (ssrPages as unknown as { __layouts?: Record<string, SsrPageLoader> }).__layouts ??
+    (autoSsrPages as unknown as { __layouts?: Record<string, SsrPageLoader> }).__layouts ??
     (autoSsrLayouts as Record<string, SsrPageLoader>);
   const staticKnown =
     options.knownEntries ??
@@ -312,6 +317,24 @@ export function shell(options: ShellOptions = {}) {
   function availableEntries(): string[] | undefined {
     if (staticKnown) return staticKnown;
     return defaultKnownEntries(ssrPages);
+  }
+
+  /**
+   * Client entries have a JS bundle (input() in the plugin). The virtual
+   * manifest carries them via `clientEntries`; the static stub has none.
+   * Layout-wrapped STATIC pages are SSR (no script branch) — their chain
+   * is rendered server-side.
+   */
+  function hasClientEntry(entryName: string): boolean {
+    const fromManifest = (
+      ssrPages as unknown as { __clientEntries?: string[] }
+    ).__clientEntries;
+    if (fromManifest) return fromManifest.includes(entryName);
+    const auto = (
+      autoSsrPages as unknown as { __clientEntries?: string[] }
+    ).__clientEntries;
+    if (auto) return auto.includes(entryName);
+    return false;
   }
 
   function layoutChainFor(entryName: string): string[] {
@@ -388,7 +411,14 @@ export function shell(options: ShellOptions = {}) {
         throw new Error(`hono-svelte: invalid entryName: ${JSON.stringify(entryName)}`);
       }
       const loader: SsrPageLoader | undefined = ssrPages[entryName];
-      const isSsr = loader !== undefined;
+      // A page is SSR when it is static (no <script>) — LAYOUTS DON'T MATTER
+      // here. A static page wrapped in layouts SSRs the page and wraps it in
+      // the layout chain (same rule as pages().staticEntries/clientEntries).
+      // Client entries (has <script>) always go the script branch.
+      const chain = layoutChainFor(entryName)
+        .map((l) => ssrLayouts[l])
+        .filter((l): l is SsrPageLoader => l !== undefined);
+      const isSsr = loader !== undefined && !hasClientEntry(entryName);
       if (strict && !isSsr) {
         const known = availableEntries();
         if (known && !known.includes(entryName)) {
@@ -408,9 +438,6 @@ export function shell(options: ShellOptions = {}) {
       let bodyHtml = "";
       let ssrHead = "";
       if (isSsr) {
-        const chain = layoutChainFor(entryName)
-          .map((l) => ssrLayouts[l])
-          .filter((l): l is SsrPageLoader => l !== undefined);
         const rendered = await renderSsrBody(loader as SsrPageLoader, props?.data, nonce, chain);
         bodyHtml = rendered.html;
         ssrHead = rendered.head;

@@ -52,6 +52,10 @@ function normalizeSlashes(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function entryNameFromFile(file: string): string {
   return normalizeSlashes(file).slice(0, -".svelte".length);
 }
@@ -131,12 +135,40 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       const absFile = resolve(pagesDir, file);
       // Automatic zero-JS: a page without <script> has no interactivity,
       // so the shell renders it on the server and the client downloads no JS.
+      // Exception: layout chain is resolved for EVERY page (even static ones)
+      // because the SHELL decides SSR-vs-client at request time:
+      // static+layouts => SSR page, then wrap in layout(s).
       const layouts = chainFor(entryName, cachedLayouts);
+      // Single source of truth: when layouts are enabled, the shell composes
+      // Page inside LayoutN...Layout0 automatically (SSR + hydrate). A page
+      // that ALSO imports its layout manually would render it twice
+      // (<main><div><main>). Fail fast with a clear message instead.
+      if (layoutsEnabled && layouts.length > 0) {
+        const source = readFileSync(absFile, "utf8");
+        for (const layout of layouts) {
+          const layoutFile = layout.endsWith("/layout")
+            ? layout.slice(0, -"/layout".length) + "/layout.svelte"
+            : "layout.svelte";
+          const base = layoutFile.split("/").pop() as string;
+          const importRe = new RegExp(
+            `import\\s+[^;]*["'][^"']*${escapeRegExp(base)}["']`,
+          );
+          if (importRe.test(source)) {
+            throw new Error(
+              `hono-svelte: page "${entryName}" manually imports "${layoutFile}", ` +
+                `but the layout is applied automatically (layoutChain: ${layouts.join(" -> ")}). ` +
+                `Remove the import and keep only the page content; ` +
+                `pass title/description via c.render(entry, { data }) if the layout needs them.`,
+            );
+          }
+        }
+      }
       const hasScript = /<script[\s>]/i.test(readFileSync(absFile, "utf8"));
-      // Layout-wrapped pages are NEVER static: the client entry hydrates the
-      // layout chain (children snippet). Keep the decision in ONE place —
-      // manifestSource() filters ssrPages by the same `isStatic` flag.
-      const isStatic = !hasScript && !alwaysClient.has(entryName) && layouts.length === 0;
+      // A page is static when it has no <script> — EVEN with layouts.
+      // The shell SSRs the page and wraps it in the layout chain; the layout
+      // files themselves are compiled into the page's client entry only when
+      // the page needs JS. Layout-wrapped static pages ship zero JS.
+      const isStatic = !hasScript && !alwaysClient.has(entryName);
       result.push({ entryName, file, absFile, isStatic, layouts });
     }
     return result;
@@ -196,6 +228,11 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
 
   function manifestSource(): string {
     const all = listPages();
+    // NOTE: `isStatic` here means "no <script>" — LAYOUTS DON'T MATTER.
+    // Static pages get an ssrPages loader REGARDLESS of layouts; the shell
+    // SSRs them and wraps the chain. Client entries (has <script>) also get
+    // a virtual entry module for the client build, but NEVER an ssrPages
+    // loader — otherwise hasClientEntry() can't distinguish them.
     const client = all.filter((p) => !p.isStatic).map((p) => p.entryName);
     const staticPages = all.filter((p) => p.isStatic);
     const loaders = staticPages.map(
@@ -225,6 +262,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       "",
       "ssrPages.__allEntries = allEntries;",
       "ssrPages.__layouts = ssrLayouts;",
+      "ssrPages.__clientEntries = clientEntries;",
       "",
       "export function hasClient(entryName) {",
       "  return !Object.prototype.hasOwnProperty.call(ssrPages, entryName);",

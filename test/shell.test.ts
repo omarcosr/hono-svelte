@@ -192,10 +192,13 @@ describe("shell", () => {
     app.use(
       "/*",
       shell({
-        ssrPages: {
-          "nested/page": propsLoader,
-          __layouts: { "nested/layout": layout },
-        } as never,
+        ssrPages: Object.assign(
+          { "nested/page": propsLoader },
+          {
+            __layouts: { "nested/layout": layout },
+            __clientEntries: [],
+          },
+        ) as never,
       }),
     );
     app.get("/", (c) => c.render("nested/page", { data: { name: "Ada" } }));
@@ -203,5 +206,28 @@ describe("shell", () => {
     expect(html).toContain('class="layout"');
     expect(html).toContain("Ada");
     expect(html.indexOf('class="layout"')).toBeLessThan(html.indexOf("Ada"));
+    // single layout application: exactly one .layout wrapper
+    expect(html.match(/class="layout"/g)?.length).toBe(1);
+  });
+
+  it("manual layout import fails fast at build time", async () => {
+    const { pages } = await import("../src/vite.js");
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "hs-manual-layout-"));
+    try {
+      mkdirSync(join(dir, "dash"), { recursive: true });
+      writeFileSync(join(dir, "dash", "layout.svelte"), "<div><slot /></div>\n");
+      writeFileSync(
+        join(dir, "dash", "page.svelte"),
+        '<script>import L from "./layout.svelte";</script><L><p>hi</p></L>\n',
+      );
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: process.cwd() } as never);
+      expect(() => plugin.buildStart()).toThrowError(/manually imports/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
