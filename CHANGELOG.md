@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+
+- Fix `hono-svelte init` refusing every file on Windows: `isSafeAppPath()`
+  now normalizes `\` vs `/` and compares case-insensitively on win32
+  (path traversal still blocked).
+- Fix `bin` path without `./` prefix — npm was silently stripping the CLI
+  from the published tarball.
+
 ## 0.4.0
 
 - **Typed `c.render` entries (opt-in)**: `pages({ dts })` writes a `.d.ts` file
