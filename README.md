@@ -234,13 +234,39 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 | `pagesDir` | `"src/pages"` | Pages folder |
 | `ignore` | `["**/_*.svelte"]` | Ignored patterns (`layout.svelte` is a layout, not a page) |
 | `layouts` | `true` | Nested `<dir>/layout.svelte` support (`false` = legacy ignore) |
+| `dts` | `false` | Typed `c.render` entries: `true` writes `src/hono-svelte-entries.d.ts`, a string sets a custom path |
 | `alwaysClient` | `[]` | Pages that always get JS, even without `<script>` |
 
-Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `types()` (entry union), `typeDeclarations()` (hono module snippet), `validateConfig()` (fail fast on bad Vite setup).
+Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `types()` (entry union), `typeDeclarations()` (hono module snippet), `dtsPath()` / `writeDts()` (generated `.d.ts`), `validateConfig()` (fail fast on bad Vite setup).
 
 ### Typing `c.render`
 
-So TypeScript accepts `c.render` in routes, declare once in the app:
+Opt-in typed entry names — a typo fails `tsc` instead of 500ing at runtime:
+
+```ts
+// vite.config.ts
+const appPages = pages({ dts: true }); // writes src/hono-svelte-entries.d.ts
+```
+
+```ts
+// src/env.d.ts — the generated file carries the `declare module "hono"`
+// augmentation, so this file is only a reference. Remove any manual
+// `(entryName: string)` declaration or it will swallow the union.
+ /// <reference path="./hono-svelte-entries.d.ts" />
+```
+
+```ts
+// generated src/hono-svelte-entries.d.ts (commit it — CI needs no Vite run)
+export type HonoSvelteEntries = "auth" | "dashboard/index" | "index";
+
+declare module "hono" {
+  interface ContextRenderer {
+    (entryName: HonoSvelteEntries, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
+  }
+}
+```
+
+`dts: "path/to/entries.d.ts"` sets a custom path (relative to the Vite root). The file regenerates on `buildStart` and via the dev watcher when entries change. Without `dts` (default `false`), declare the renderer manually with a plain `string`:
 
 ```ts
 import type { RenderProps } from "hono-svelte";
@@ -252,7 +278,7 @@ declare module "hono" {
 }
 ```
 
-Or generate the entry union from the plugin: `pages().types()` → `"admin" | "home"`, and `pages().typeDeclarations()` for the full module snippet.
+`data` stays `Record<string, unknown>` — per-page payload types are a future feature. Programmatic access: `pages().types()` → `"admin" | "home"`, `pages().typeDeclarations()` for the snippet, `dtsPath()` / `writeDts()` for the file.
 
 ## Production tips
 
