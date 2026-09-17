@@ -1,5 +1,5 @@
-import { existsSync, globSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getIds } from "./ids.js";
 import {
   ENTRY_PREFIX,
@@ -21,6 +21,20 @@ export type PagesOptions = {
    * @default true
    */
   layouts?: boolean;
+  /**
+   * Write a `.d.ts` file with the entry union + `declare module "hono"`
+   * augmentation so `c.render()` is typed with the available pages.
+   * Opt-in: `false` (default) disables generation.
+   *
+   * - `true` writes next to the tsconfig-based default
+   *   (`src/hono-svelte-entries.d.ts` relative to the Vite root).
+   * - A string sets the output path (relative paths resolve from Vite root).
+   *
+   * The file must be inside the `tsconfig.json` `include` for `tsc` to pick
+   * it up. Regenerated when the entry list changes (build + dev watcher).
+   * @default false
+   */
+  dts?: boolean | string;
 };
 
 export type PagesPlugin = Plugin & {
@@ -32,6 +46,10 @@ export type PagesPlugin = Plugin & {
   types: () => string;
   /** `declare module "hono"` snippet + the entry union. */
   typeDeclarations: () => string;
+  /** Absolute path of the generated `.d.ts`, or `null` when `dts` is off. */
+  dtsPath: () => string | null;
+  /** (Re)write the `.d.ts` file now. No-op when `dts` is off. */
+  writeDts: () => string | null;
   /** Nested layout entryNames (or [] when `layouts: false`). */
   layouts: () => string[];
   /** Layout chain for an entry, outermost first (or [] for none). */
@@ -91,6 +109,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   let viteRoot: string | null = null;
   let vitePlugins: { name?: string }[] = [];
   let viteMode = "";
+  let lastWrittenDts: string | null = null;
 
   function computeLayouts(allFiles: string[]): LayoutSpec[] {
     if (!layoutsEnabled) return [];
@@ -200,6 +219,43 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     return listPages()
       .map((p) => (p.isStatic ? "S:" : "C:") + p.entryName)
       .join("|");
+  }
+
+  function resolveDtsPath(): string | null {
+    if (options.dts === false || options.dts === undefined) return null;
+    const root = viteRoot ?? process.cwd();
+    const rel = typeof options.dts === "string" ? options.dts : "src/hono-svelte-entries.d.ts";
+    return isAbsolute(rel) ? rel : resolve(root, rel);
+  }
+
+  function dtsSource(): string {
+    const names = listPages().map((p) => p.entryName);
+    const typeName = "HonoSvelteEntries";
+    const unionSrc = names.length === 0 ? "never" : names.map((n) => JSON.stringify(n)).join(" | ");
+    return [
+      header,
+      `// Entries: ${names.length === 0 ? "(none)" : names.join(", ")}`,
+      "",
+      `export type ${typeName} = ${unionSrc};`,
+      "",
+      `declare module "hono" {`,
+      `  interface ContextRenderer {`,
+      `    (entryName: ${typeName}, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;`,
+      `  }`,
+      `}`,
+      "",
+    ].join("\n");
+  }
+
+  function writeDtsFile(): string | null {
+    const out = resolveDtsPath();
+    if (!out) return null;
+    const content = dtsSource();
+    if (content === lastWrittenDts && existsSync(out)) return out;
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, content);
+    lastWrittenDts = content;
+    return out;
   }
 
   function pageImportPath(page: PageSpec): string {
@@ -330,6 +386,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     },
     buildStart() {
       refresh();
+      writeDtsFile();
     },
     resolveId(source, importer) {
       // Virtual manifest: explicit (virtual:hono-svelte/manifest, backwards compat)
@@ -370,6 +427,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
         cachedPages = null;
         refresh();
         if (stateKey() !== before) {
+          writeDtsFile();
           const mod = server.moduleGraph.getModuleById(MANIFEST_RESOLVED);
           if (mod) server.moduleGraph.invalidateModule(mod);
           server.ws.send({ type: "full-reload" });
@@ -411,6 +469,12 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       const names = listPages().map((p) => p.entryName);
       if (names.length === 0) return "never";
       return names.map((n) => JSON.stringify(n)).join(" | ");
+    },
+    dtsPath() {
+      return resolveDtsPath();
+    },
+    writeDts() {
+      return writeDtsFile();
     },
     typeDeclarations() {
       const names = listPages().map((p) => p.entryName);
@@ -459,6 +523,10 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     viteRoot = c.root ?? viteRoot;
     vitePlugins = c.plugins ?? [];
     viteMode = c.mode ?? "";
+    // Write the entries .d.ts as soon as the root is known — before
+    // buildStart — so `vite build` fails fast on a bad dts path and the
+    // file exists even if a later hook throws.
+    writeDtsFile();
     if (
       (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.VITEST !== "true" &&
       (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV !== "test"

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { hc } from "hono/client";
-  import type { AppType } from "../routes";
+  import type { AppType } from "../../routes";
 
   type PageData = { demo?: boolean };
   let { demo }: PageData = $props();

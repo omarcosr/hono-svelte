@@ -6,7 +6,7 @@ import { pages } from "hono-svelte/vite";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
-const appPages = pages();
+const appPages = pages({ dts: true });
 
 export default defineConfig(({ command, mode }) => {
   if (mode === "client") {

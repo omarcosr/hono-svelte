@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -115,5 +116,51 @@ describe("pages() plugin", () => {
     expect(plugin.entries()).toEqual(["admin", "home"]);
     expect(plugin.layouts()).toEqual([]);
     expect(plugin.layoutChain("admin")).toEqual([]);
+  });
+
+  it("dts is off by default (no file written)", () => {
+    const plugin = makePlugin();
+    expect(plugin.dtsPath()).toBeNull();
+    expect(plugin.writeDts()).toBeNull();
+  });
+
+  it("dts:true writes the entries union + hono augmentation", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-dts-"));
+    try {
+      const out = join(dir, "entries.d.ts");
+      const plugin = pages({ pagesDir: "test/fixtures/pages", dts: out });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      expect(plugin.dtsPath()).toBe(out);
+      expect(existsSync(out)).toBe(true);
+      const content = readFileSync(out, "utf8");
+      expect(content).toContain("HonoSvelteEntries");
+      expect(content).toContain('"admin" | "home"');
+      expect(content).toContain('declare module "hono"');
+      // regenerating with identical entries skips the rewrite
+      expect(plugin.writeDts()).toBe(out);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("dts regenerates when entries change", () => {
+    const pagesDir = mkdtempSync(join(tmpdir(), "hs-dts-pages-"));
+    const outDir = mkdtempSync(join(tmpdir(), "hs-dts-out-"));
+    try {
+      writeFileSync(join(pagesDir, "a.svelte"), "<h1>a</h1>\n");
+      const out = join(outDir, "entries.d.ts");
+      const plugin = pages({ pagesDir, dts: out });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      expect(readFileSync(out, "utf8")).toContain('"a"');
+      writeFileSync(join(pagesDir, "b.svelte"), "<h1>b</h1>\n");
+      plugin.buildStart();
+      const content = readFileSync(out, "utf8");
+      expect(content).toContain('"a" | "b"');
+    } finally {
+      rmSync(pagesDir, { recursive: true, force: true });
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });
