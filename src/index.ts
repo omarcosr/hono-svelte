@@ -193,22 +193,27 @@ export function __resetDataLimitWarned(): void {
 
 type EnvProbe = { env?: { PROD?: boolean; DEV?: boolean } };
 
+/**
+ * Build-time flags. `import.meta.env.PROD/DEV` MUST be accessed statically
+ * (no `as unknown`, no intermediate variable) so Vite/esbuild can replace
+ * them with literals per bundle. In plain node (no Vite define) the access
+ * throws at module-eval time, hence the try/catch with NODE_ENV fallback.
+ * (Vite module runner forbids *dynamic* access of import.meta.env.)
+ */
 function detectProd(): boolean {
   try {
-    const meta = import.meta as unknown as EnvProbe;
-    if (meta.env?.PROD !== undefined) return meta.env.PROD;
+    if (import.meta.env.PROD !== undefined) return import.meta.env.PROD;
   } catch {
-    // ignore — non-Vite runtimes
+    // plain node / vitest: no import.meta.env
   }
   return (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV === "production";
 }
 
 function isDev(): boolean {
   try {
-    const meta = import.meta as unknown as EnvProbe;
-    if (meta.env?.DEV !== undefined) return meta.env.DEV;
+    if (import.meta.env.DEV !== undefined) return import.meta.env.DEV;
   } catch {
-    // ignore
+    // plain node / vitest
   }
   return (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV !== "production";
 }
@@ -357,7 +362,12 @@ export function shell(options: ShellOptions = {}) {
       for (const layoutLoader of layoutChain) {
         const layoutMod = await layoutLoader();
         const childHtml = html;
-        const childSnippet = createRawSnippet(() => ({ render: () => childHtml }));
+        // The snippet MUST render a single wrapper element: the server
+        // renderer pushes render() output verbatim, and the client
+        // createRawSnippet takes get_first_child(fragment). An empty render
+        // breaks hydration ("Cannot set properties of null"). The extra div
+        // is hydration-safe (hydrate reuses SSR DOM).
+        const childSnippet = createRawSnippet(() => ({ render: () => `<div>${childHtml}</div>` }));
         const wrapped = render(layoutMod.default as Component, {
           ...(pageData !== undefined ? { props: pageData } : {}),
           props: { ...(pageData ?? {}), children: childSnippet },

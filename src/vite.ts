@@ -235,16 +235,18 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
 
   function entrySource(page: PageSpec): string {
     const ids = getIds(page.entryName);
-    // Layouts are a server-side (SSR) composition: the shell renders
-    // Page inside LayoutN...Layout0 via svelte/server. On the client the
-    // entry hydrates the same tree (no duplicated DOM): hydrate() Layout0
-    // with a children snippet that hydrates Page into the outlet.
+    // Layouts are composed on the SERVER (SSR): the entry's client script
+    // hydrates the same tree — hydrate() the layout with a children snippet
+    // that hydrates the page. Static import (no `await import`) so the
+    // bundler keeps one copy of the svelte runtime in the entry chunk.
     const layoutImports = page.layouts
       .map((l, i) => `import Layout${i} from ${JSON.stringify(layoutImportPath(layoutByName(l)))};`)
       .join("\n");
     return (
       header + " Source: " + page.file + "\n" +
-      'import { hydrate, mount } from "svelte";\n' +
+      (page.layouts.length > 0
+        ? 'import { createRawSnippet, hydrate, mount } from "svelte";\n'
+        : 'import { mount } from "svelte";\n') +
       "import Page from " + JSON.stringify(pageImportPath(page)) + ";\n" +
       (page.layouts.length > 0 ? layoutImports + "\n" : "") +
       "const target = document.getElementById(" + JSON.stringify(ids.rootId) + ");\n" +
@@ -257,11 +259,15 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
 
   function entryMountSource(page: PageSpec): string {
     if (page.layouts.length === 0) return "if (target) mount(Page, { target, props });";
+    // NOTE: createRawSnippet's snippet MUST render one wrapper element
+    // (client impl takes get_first_child(fragment) and calls setup(element)).
+    // An empty render ("") yields a null element -> "Cannot set properties
+    // of null" inside svelte internals. The wrapper div is hydration-safe:
+    // hydrate() reuses the SSR DOM instead of creating new nodes.
     return [
       "if (target) {",
-      "  const { createRawSnippet } = await import(\"svelte\");",
       "  const __kids = createRawSnippet(() => ({",
-      "    render: () => \"\",",
+      "    render: () => \"<div></div>\",",
       "    setup: (el) => { hydrate(Page, { target: el, props }); },",
       "  }));",
       "  hydrate(Layout0, { target, props: { ...props, children: __kids } });",
