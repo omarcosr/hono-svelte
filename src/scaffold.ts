@@ -129,7 +129,17 @@ export function checkAppLink(appRoot: string): DoctorIssue | null {
 }
 
 export function isSafeAppPath(appRoot: string, target: string): boolean {
+  // NOTE: compare case-insensitively on Windows (C:\Users vs c:\users) and
+  // accept both separators. `join("C:\\x", "src/a")` yields backslashes,
+  // so checking `startsWith(root + "/")` always failed on win32 and `init`
+  // refused every file.
   const root = resolve(appRoot);
   const abs = isAbsolute(target) ? target : resolve(root, target);
-  return abs === root || abs.startsWith(root + "/");
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const lower = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+  const nRoot = lower(norm(root));
+  const nAbs = lower(norm(abs));
+  // Exact root itself is not a writable file, but treat as safe for symmetry
+  // with the old check; callers only pass file paths.
+  return nAbs === nRoot || nAbs.startsWith(nRoot + "/");
 }

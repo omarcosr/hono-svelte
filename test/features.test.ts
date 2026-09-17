@@ -8,7 +8,7 @@ import {
   manifestImportsFor,
 } from "../src/assets.js";
 import { errorHandler, notFoundHandler } from "../src/handlers.js";
-import { checkAppLink, doctorChecks, initFiles } from "../src/scaffold.js";
+import { checkAppLink, doctorChecks, initFiles, isSafeAppPath } from "../src/scaffold.js";
 
 describe("renderHead", () => {
   it("renders description, canonical and theme-color", () => {
@@ -108,5 +108,16 @@ describe("scaffold", () => {
     expect(issues.map((i) => i.code)).toContain("missing-dist");
     expect(issues[0].fix.length).toBeGreaterThan(0);
     expect(checkAppLink("/nope")?.code).toBe("missing-link");
+  });
+
+  it("isSafeAppPath accepts in-root files on any separator/case", () => {
+    // Regression: on Windows join() yields backslashes, so comparing
+    // against root + "/" rejected EVERY file and `init` refused to write.
+    expect(isSafeAppPath("C:\\proj", "C:\\proj\\src\\env.d.ts")).toBe(true);
+    expect(isSafeAppPath("C:/proj", "C:/proj/src/pages/index.svelte")).toBe(true);
+    expect(isSafeAppPath(process.cwd(), "src/env.d.ts")).toBe(true);
+    expect(isSafeAppPath("C:\\proj", "C:\\other\\evil.ts")).toBe(false);
+    expect(isSafeAppPath("/app", "/etc/passwd")).toBe(false);
+    expect(isSafeAppPath("/app", "/app/../evil.ts")).toBe(false);
   });
 });
