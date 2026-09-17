@@ -1,0 +1,1 @@
+<span>parcial</span>

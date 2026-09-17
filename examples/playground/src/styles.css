@@ -1,0 +1,27 @@
+@source "./";
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@plugin "daisyui" {
+  include: rootcolor, badge, alert, card, button, input, radius;
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+  }
+
+  button {
+    font: inherit;
+  }
+
+  pre {
+    font-family: var(--default-mono-font-family);
+  }
+}

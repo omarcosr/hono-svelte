@@ -1,0 +1,53 @@
+{
+  "name": "hono-svelte",
+  "version": "0.3.0",
+  "description": "Server-side shell + multi-entry Svelte pages for Hono apps",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "default": "./dist/vite.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "npm run build && npm test && npx publint",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "hono": "^4",
+    "svelte": "^5",
+    "vite": "^6 || ^7 || ^8"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@types/node": "^22.7.0",
+    "publint": "^0.3.24",
+    "svelte": "^5.57.0",
+    "typescript": "^5.6.0",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "keywords": [
+    "hono",
+    "svelte",
+    "vite",
+    "ssr",
+    "zero-js",
+    "middleware"
+  ]
+}
