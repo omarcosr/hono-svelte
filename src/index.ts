@@ -197,14 +197,19 @@ type EnvProbe = { env?: { PROD?: boolean; DEV?: boolean } };
  * Build-time flags. `import.meta.env.PROD/DEV` MUST be accessed statically
  * (no `as unknown`, no intermediate variable) so Vite/esbuild can replace
  * them with literals per bundle. In plain node (no Vite define) the access
- * throws at module-eval time, hence the try/catch with NODE_ENV fallback.
- * (Vite module runner forbids *dynamic* access of import.meta.env.)
+ * throws at module-eval time, hence the try/catch.
+ *
+ * NOTE: the server bundle is ALWAYS production (built with
+ * `vite build --mode production`), so when Vite replaced the flag the answer
+ * is baked in. The NODE_ENV fallback only matters for unbundled runtimes
+ * (tests, `vite dev` SSR). `node ./dist/index.js` needs no env prefix.
  */
 function detectProd(): boolean {
   try {
     if (import.meta.env.PROD !== undefined) return import.meta.env.PROD;
   } catch {
-    // plain node / vitest: no import.meta.env
+    // plain node / vitest: no import.meta.env — bundled server is prod
+    return true;
   }
   return (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV === "production";
 }
@@ -214,6 +219,7 @@ function isDev(): boolean {
     if (import.meta.env.DEV !== undefined) return import.meta.env.DEV;
   } catch {
     // plain node / vitest
+    return false;
   }
   return (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV !== "production";
 }
