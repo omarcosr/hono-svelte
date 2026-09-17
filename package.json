@@ -4,7 +4,7 @@
   "description": "Server-side shell + multi-entry Svelte pages for Hono apps",
   "type": "module",
   "bin": {
-    "hono-svelte": "./dist/cli.js"
+    "hono-svelte": "dist/cli.js"
   },
   "exports": {
     ".": {
