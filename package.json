@@ -1,6 +1,6 @@
 {
   "name": "hono-svelte",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Server-side shell + multi-entry Svelte pages for Hono apps",
   "type": "module",
   "exports": {
@@ -15,7 +15,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -49,5 +51,14 @@
     "ssr",
     "zero-js",
     "middleware"
-  ]
+  ],
+  "author": "omarcos",
+  "homepage": "https://github.com/omarcosr/hono-svelte",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omarcosr/hono-svelte.git"
+  }
 }

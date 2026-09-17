@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Package metadata: repository/homepage/author, publishConfig, LICENSE + CHANGELOG in files.
+- No code changes since 0.3.0.
+
 ## 0.3.0
 
 - Fully in-memory package: entries and manifest are virtual modules (no files written to disk).
