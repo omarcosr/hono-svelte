@@ -221,8 +221,8 @@ function defaultKnownEntries(ssrPages: Record<string, SsrPageLoader>): string[] 
   return keys.length > 0 ? keys : undefined;
 }
 
-function renderNotFoundHint(available: string[] | undefined, prod: boolean): string {
-  if (prod || !available || available.length === 0) {
+function renderNotFoundHint(available: string[] | undefined, _prod?: boolean): string {
+  if (!available || available.length === 0) {
     return "hono-svelte: unknown entry (check pagesDir and the entryName passed to c.render)";
   }
   const list = [...available].sort().slice(0, 20).join('", "');
@@ -382,8 +382,7 @@ export function shell(options: ShellOptions = {}) {
       if (strict && !isSsr) {
         const known = availableEntries();
         if (known && !known.includes(entryName)) {
-          const dev = isDev();
-          throw new Error(`${renderNotFoundHint(known, !dev)} (got ${JSON.stringify(entryName)})`);
+          throw new Error(`${renderNotFoundHint(known)} (got ${JSON.stringify(entryName)})`);
         }
       }
       const ids = getIds(entryName);

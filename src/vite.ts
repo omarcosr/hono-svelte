@@ -131,14 +131,13 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       const absFile = resolve(pagesDir, file);
       // Automatic zero-JS: a page without <script> has no interactivity,
       // so the shell renders it on the server and the client downloads no JS.
+      const layouts = chainFor(entryName, cachedLayouts);
       const hasScript = /<script[\s>]/i.test(readFileSync(absFile, "utf8"));
-      result.push({
-        entryName,
-        file,
-        absFile,
-        isStatic: !hasScript && !alwaysClient.has(entryName),
-        layouts: chainFor(entryName, cachedLayouts),
-      });
+      // Layout-wrapped pages are NEVER static: the client entry hydrates the
+      // layout chain (children snippet). Keep the decision in ONE place —
+      // manifestSource() filters ssrPages by the same `isStatic` flag.
+      const isStatic = !hasScript && !alwaysClient.has(entryName) && layouts.length === 0;
+      result.push({ entryName, file, absFile, isStatic, layouts });
     }
     return result;
   }
@@ -238,17 +237,15 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     const ids = getIds(page.entryName);
     // Layouts are a server-side (SSR) composition: the shell renders
     // Page inside LayoutN...Layout0 via svelte/server. On the client the
-    // entry mounts the outermost layout; the inner page HTML is already in
-    // the SSR DOM (MPA navigation = full reload per page). Layout files that
-    // need interactivity keep their own <script> and hydrate with the layout.
+    // entry hydrates the same tree (no duplicated DOM): hydrate() Layout0
+    // with a children snippet that hydrates Page into the outlet.
     const layoutImports = page.layouts
       .map((l, i) => `import Layout${i} from ${JSON.stringify(layoutImportPath(layoutByName(l)))};`)
       .join("\n");
     return (
       header + " Source: " + page.file + "\n" +
-      'import { mount } from "svelte";\n' +
+      'import { hydrate, mount } from "svelte";\n' +
       "import Page from " + JSON.stringify(pageImportPath(page)) + ";\n" +
-      (layoutImports && page.layouts.length === 0 ? layoutImports + "\n" : "") +
       (page.layouts.length > 0 ? layoutImports + "\n" : "") +
       "const target = document.getElementById(" + JSON.stringify(ids.rootId) + ");\n" +
       "const raw = document.getElementById(" + JSON.stringify(ids.dataId) + ")?.textContent;\n" +
@@ -260,14 +257,14 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
 
   function entryMountSource(page: PageSpec): string {
     if (page.layouts.length === 0) return "if (target) mount(Page, { target, props });";
-    // SSR DOM already contains Layout+Page HTML. Mount the layout shell
-    // (its <script>, if any, runs) and then the interactive Page into the
-    // layout's children outlet when present.
     return [
       "if (target) {",
-      "  mount(Layout0, { target, props });",
-      "  const outlet = target.querySelector('[data-hs-outlet]') || target;",
-      "  if (outlet !== target) mount(Page, { target: outlet, props });",
+      "  const { createRawSnippet } = await import(\"svelte\");",
+      "  const __kids = createRawSnippet(() => ({",
+      "    render: () => \"\",",
+      "    setup: (el) => { hydrate(Page, { target: el, props }); },",
+      "  }));",
+      "  hydrate(Layout0, { target, props: { ...props, children: __kids } });",
       "}",
     ].join("\n");
   }

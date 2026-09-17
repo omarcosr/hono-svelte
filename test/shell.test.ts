@@ -88,7 +88,7 @@ describe("shell", () => {
     expect(res.headers.get("X-Over")).toBe("page");
   });
 
-  it("unknown entry lists available pages in dev", async () => {
+  it("unknown entry lists available pages", async () => {
     const app = new Hono();
     app.use("/*", shell({ knownEntries: ["admin", "home"] }));
     app.get("/x", (c) => c.render("nope"));
@@ -134,7 +134,7 @@ describe("shell", () => {
 
   it("nonce is applied to script and link tags", async () => {
     const app = new Hono();
-    app.use("/*", shell({ nonce: "abc123" }));
+    app.use("/*", shell({ nonce: "abc123" } as never));
     app.get("/", (c) => c.render("admin"));
     const html = await (await app.request("/")).text();
     expect(html).toContain('nonce="abc123"');
@@ -145,7 +145,7 @@ describe("shell", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const app = new Hono();
-      app.use("/*", shell({ dataLimit: 10 }));
+      app.use("/*", shell({ dataLimit: 10 } as never));
       app.get("/", (c) => c.render("admin", { data: { big: "0123456789abcdef" } }));
       await app.request("/");
       await app.request("/");
@@ -166,7 +166,7 @@ describe("shell", () => {
       "./chunk.js": { file: "static/chunks/chunk-XYZ.js" },
     };
     const app = new Hono();
-    app.use("/*", shell({ assets: manifest, isProd: true }));
+    app.use("/*", shell({ assets: manifest, isProd: true } as never));
     app.get("/", (c) => c.render("admin"));
     const html = await (await app.request("/")).text();
     expect(html).toContain('src="/static/admin-ABC123.js"');
@@ -177,7 +177,7 @@ describe("shell", () => {
 
   it("prefetch all emits links for other entries", async () => {
     const app = new Hono();
-    app.use("/*", shell({ knownEntries: ["a", "b"], prefetch: "all", isProd: true }));
+    app.use("/*", shell({ knownEntries: ["a", "b"], prefetch: "all", isProd: true } as never));
     app.get("/", (c) => c.render("a"));
     const html = await (await app.request("/")).text();
     expect(html).toContain('rel="prefetch" href="/static/b.js"');

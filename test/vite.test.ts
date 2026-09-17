@@ -52,7 +52,7 @@ describe("pages() plugin", () => {
     const code = plugin.load(String.fromCharCode(0) + ENTRY_PREFIX + "admin") as string;
     expect(code).toContain(`document.getElementById("${ids.rootId}")`);
     expect(code).toContain(`document.getElementById("${ids.dataId}")`);
-    expect(code).toContain('import { mount } from "svelte"');
+    expect(code).toContain('from "svelte"');
     expect(code).toContain('"/test/fixtures/pages/admin.svelte"');
   });
 
@@ -102,7 +102,7 @@ describe("pages() plugin", () => {
         String.fromCharCode(0) + ENTRY_PREFIX + "nested/page",
       ) as string;
       expect(code).toContain("Layout0");
-      expect(code).toContain("data-hs-outlet");
+      expect(code).toContain("hydrate(Layout0");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
