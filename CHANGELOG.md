@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.2
+
+- `hono-svelte init` now scaffolds a complete runnable app (works with
+  `npx`, `bunx` and `pnpm dlx` — writes text files only, no install/network).
+  Minimal flavor (default): `package.json`, `tsconfig.json`, `.gitignore`,
+  `vite.config.ts` (with `pages({ dts: true })`), two pages (`index` zero-JS,
+  `hello` with `data`), `src/routes/index.ts`, `src/styles.css`.
+  `init --full` adds auth (cookie session), dashboard with nested layout,
+  and typed RPC (`hc<AppType>`) — `/auth` → login → `/dashboard`.
+  Generated scripts (`dev`/`build`/`typecheck`/`start`) run under npm and bun.
+  `InitFlavor` type exported.
+
 ## 0.4.1
 
 - Fix `hono-svelte init` refusing every file on Windows: `isSafeAppPath()`

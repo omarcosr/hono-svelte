@@ -193,7 +193,20 @@ app.onError(errorHandler()); // renders `500.svelte` with status 500
 ## CLI
 
 ```sh
-npx hono-svelte init                  # scaffold src/pages, vite.config.ts, env.d.ts
+# Start a new app (works with npx, bunx or pnpm dlx — no install needed):
+bunx hono-svelte init                 # minimal: 2 pages + routes + configs
+bunx hono-svelte init --full          # + auth, dashboard w/ layout, typed RPC
+
+cd my-app && bun install && bun run dev   # or: npm install && npm run dev
+```
+
+`init` scaffolds a complete runnable app: `package.json`, `tsconfig.json`,
+`vite.config.ts` (with `pages({ dts: true })`), `src/pages/` and
+`src/routes/`. The `--full` flavor adds cookie-session auth, a dashboard with
+nested layout, and a typed API (`hc<AppType>`) — open `/auth`, sign in, explore
+`/dashboard`. Generated scripts run under npm and bun.
+
+```sh
 npx hono-svelte doctor                # check dist, link and vite config
 npx hono-svelte doctor --app=./my-app # check another app directory
 ```
