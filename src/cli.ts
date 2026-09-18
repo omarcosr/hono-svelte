@@ -48,12 +48,12 @@ function init(): void {
   }
   console.log(`[hono-svelte] done (${flavor}). Next:`);
   if (flavor === "minimal") {
-    console.log(`  1. npm install   (or: bun install)`);
-    console.log(`  2. npm run dev   (or: bun run dev)`);
+    console.log(`  1. bun install`);
+    console.log(`  2. bun run dev   (or: bun --bun run dev)`);
     console.log(`  Tip: --full scaffolds auth + dashboard + layout + typed RPC.`);
   } else {
-    console.log(`  1. npm install   (or: bun install)`);
-    console.log(`  2. npm run dev   (or: bun run dev)   →  /auth → /dashboard`);
+    console.log(`  1. bun install`);
+    console.log(`  2. bun run dev   (or: bun --bun run dev)   →  /auth → /dashboard`);
   }
 }
 

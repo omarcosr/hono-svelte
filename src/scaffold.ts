@@ -5,10 +5,9 @@
 // `dist/cli.js`, invoked via the `hono-svelte` bin).
 //
 // Runtime note: `init` writes plain text files only — no install, no network.
-// It works identically under `npx` (npm), `bunx` (bun) and `pnpm dlx`.
-// The generated app is runtime-agnostic too: `bun run dev`, `bun run build`
-// and `bun run start` work because every script shells out to `vite` / `node`
-// (both runnable from bun).
+// It works identically under `bunx` (bun), `npx` (npm) and `pnpm dlx`.
+// The generated app targets bun first (`bun install`, `bun run dev/build/start`);
+// npm still works since every script shells out to `vite` / `node`.
 
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
@@ -67,7 +66,7 @@ const PACKAGE_JSON = `{
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:client && npm run build:server",
+    "build": "bun run build:client && bun run build:server",
     "build:client": "vite build --mode client",
     "build:server": "vite build --mode production",
     "typecheck": "tsc --noEmit",

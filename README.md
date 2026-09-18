@@ -15,10 +15,10 @@ Real sites and dashboards mix simple pages (landing, login, terms) with interact
 
 ## Installation
 
-Requires Node 22+, Hono 4, Svelte 5, and Vite 6/7/8.
+Requires Bun 1+, Hono 4, Svelte 5, and Vite 6/7/8. (Works with Node 22+ too.)
 
 ```sh
-npm install hono-svelte
+bun add hono-svelte
 ```
 
 ## Quick start
@@ -193,22 +193,22 @@ app.onError(errorHandler()); // renders `500.svelte` with status 500
 ## CLI
 
 ```sh
-# Start a new app (works with npx, bunx or pnpm dlx — no install needed):
+# Start a new app (no install needed):
 bunx hono-svelte init                 # minimal: 2 pages + routes + configs
 bunx hono-svelte init --full          # + auth, dashboard w/ layout, typed RPC
 
-cd my-app && bun install && bun run dev   # or: npm install && npm run dev
+cd my-app && bun install && bun run dev
 ```
 
 `init` scaffolds a complete runnable app: `package.json`, `tsconfig.json`,
 `vite.config.ts` (with `pages({ dts: true })`), `src/pages/` and
 `src/routes/`. The `--full` flavor adds cookie-session auth, a dashboard with
 nested layout, and a typed API (`hc<AppType>`) — open `/auth`, sign in, explore
-`/dashboard`. Generated scripts run under npm and bun.
+`/dashboard`. (npm/pnpm work too: `npx hono-svelte init`, `npm install`.)
 
 ```sh
-npx hono-svelte doctor                # check dist, link and vite config
-npx hono-svelte doctor --app=./my-app # check another app directory
+bunx hono-svelte doctor                # check dist, link and vite config
+bunx hono-svelte doctor --app=./my-app # check another app directory
 ```
 
 ## API
@@ -305,7 +305,7 @@ declare module "hono" {
 `examples/playground/` is a real Hono app using the package: static landing, login, and a dashboard with typed RPC and cookie session. To run it:
 
 ```sh
-cd examples/playground && npm install && npm run build
+cd examples/playground && bun install && bun run build
 ```
 
 ## License
