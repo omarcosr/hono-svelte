@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { renderHead } from "../src/head.js";
 import {
   CACHE_IMMUTABLE,
@@ -9,6 +14,7 @@ import {
 } from "../src/assets.js";
 import { errorHandler, notFoundHandler } from "../src/handlers.js";
 import { checkAppLink, doctorChecks, initFiles, isSafeAppPath } from "../src/scaffold.js";
+import { existsSync } from "node:fs";
 
 describe("renderHead", () => {
   it("renders description, canonical and theme-color", () => {
@@ -95,12 +101,34 @@ describe("handlers", () => {
 describe("scaffold", () => {
   it("initFiles scaffolds env, vite config and index page", () => {
     const files = initFiles();
-    expect(files.map((f) => f.path)).toEqual([
-      "src/env.d.ts",
-      "vite.config.ts",
-      "src/pages/index.svelte",
-    ]);
+    const paths = files.map((f) => f.path);
+    expect(paths).toContain("package.json");
+    expect(paths).toContain("tsconfig.json");
+    expect(paths).toContain("src/env.d.ts");
+    expect(paths).toContain("vite.config.ts");
+    expect(paths).toContain("src/pages/index.svelte");
+    expect(paths).toContain("src/pages/hello.svelte");
+    expect(paths).toContain("src/routes/index.ts");
     expect(files.every((f) => f.skipIfExists)).toBe(true);
+  });
+
+  it("initFiles --full adds auth, dashboard, layout and typed RPC", () => {
+    const paths = initFiles("full").map((f) => f.path);
+    for (const p of [
+      "src/lib/auth.ts",
+      "src/middleware/auth.ts",
+      "src/routes/auth.ts",
+      "src/routes/dashboard.ts",
+      "src/routes/api.ts",
+      "src/pages/auth.svelte",
+      "src/pages/dashboard/index.svelte",
+      "src/pages/dashboard/page1.svelte",
+      "src/pages/dashboard/layout.svelte",
+    ]) {
+      expect(paths).toContain(p);
+    }
+    // minimal stays lean
+    expect(initFiles("minimal").map((f) => f.path)).not.toContain("src/routes/api.ts");
   });
 
   it("doctorChecks flags missing dist and missing app link", () => {
@@ -119,5 +147,29 @@ describe("scaffold", () => {
     expect(isSafeAppPath("C:\\proj", "C:\\other\\evil.ts")).toBe(false);
     expect(isSafeAppPath("/app", "/etc/passwd")).toBe(false);
     expect(isSafeAppPath("/app", "/app/../evil.ts")).toBe(false);
+  });
+
+  it("init --full scaffolds a runnable app (smoke: tsc on generated files)", () => {
+    const pkgRoot = resolve(fileURLToPath(import.meta.url), "..", "..");
+    const dir = mkdtempSync(join(tmpdir(), "hs-init-full-"));
+    try {
+      execFileSync(process.execPath, [join(pkgRoot, "dist", "cli.js"), "init", "--full", `--app=${dir}`], {
+        stdio: "pipe",
+      });
+      // key files exist
+      for (const p of [
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "src/routes/index.ts",
+        "src/routes/dashboard.ts",
+        "src/pages/dashboard/layout.svelte",
+        "src/pages/dashboard/index.svelte",
+      ]) {
+        expect(existsSync(join(dir, p)), p).toBe(true);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -39,7 +39,7 @@ export type {
 export { notFoundHandler, errorHandler } from "./handlers.js";
 export type { ErrorPageOptions, ServerErrorHandlerOptions } from "./handlers.js";
 export { initFiles, doctorChecks, checkAppLink, versionsMatch, isSafeAppPath } from "./scaffold.js";
-export type { DoctorIssue, DoctorOptions, InitFile } from "./scaffold.js";
+export type { DoctorIssue, DoctorOptions, InitFile, InitFlavor } from "./scaffold.js";
 
 // Template rule (server -> svelte):
 // - data: small, public, and serializable - embedded in the initial HTML

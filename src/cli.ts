@@ -5,7 +5,13 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { doctorChecks, checkAppLink, initFiles, isSafeAppPath } from "./scaffold.js";
+import {
+  doctorChecks,
+  checkAppLink,
+  initFiles,
+  isSafeAppPath,
+  type InitFlavor,
+} from "./scaffold.js";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -16,10 +22,16 @@ function flagValue(name: string): string | undefined {
   return hit ? hit.slice(pref.length) : undefined;
 }
 
+function hasFlag(name: string): boolean {
+  return args.includes(`--${name}`);
+}
+
 const appRoot = flagValue("app") ?? process.cwd();
+const flavor: InitFlavor = hasFlag("full") ? "full" : "minimal";
 
 function init(): void {
-  for (const file of initFiles()) {
+  const files = initFiles(flavor);
+  for (const file of files) {
     const dest = join(appRoot, file.path);
     if (!isSafeAppPath(appRoot, dest)) {
       console.error(`[hono-svelte] refusing to write outside ${appRoot}: ${file.path}`);
@@ -33,6 +45,15 @@ function init(): void {
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(dest, file.content);
     console.log(`[hono-svelte] wrote ${file.path}`);
+  }
+  console.log(`[hono-svelte] done (${flavor}). Next:`);
+  if (flavor === "minimal") {
+    console.log(`  1. npm install   (or: bun install)`);
+    console.log(`  2. npm run dev   (or: bun run dev)`);
+    console.log(`  Tip: --full scaffolds auth + dashboard + layout + typed RPC.`);
+  } else {
+    console.log(`  1. npm install   (or: bun install)`);
+    console.log(`  2. npm run dev   (or: bun run dev)   →  /auth → /dashboard`);
   }
 }
 
@@ -59,6 +80,7 @@ function doctor(): void {
 if (command === "init") init();
 else if (command === "doctor") doctor();
 else {
-  console.log("Usage: hono-svelte <init|doctor> [--app=<dir>]");
+  console.log("Usage: hono-svelte <init|doctor> [--app=<dir>] [--full]");
+  console.log("  init [--full]   scaffold a runnable app (minimal by default)");
   process.exitCode = 1;
 }
