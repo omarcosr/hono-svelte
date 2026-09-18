@@ -1,5 +1,6 @@
-import build from "@hono/vite-build/node";
+import build from "@hono/vite-build/bun";
 import devServer from "@hono/vite-dev-server";
+import bunAdapter from "@hono/vite-dev-server/bun";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 import { pages } from "hono-svelte/vite";
@@ -39,6 +40,7 @@ export default defineConfig(({ command, mode }) => {
         appPages,
         devServer({
           entry: "src/routes/index.ts",
+          adapter: bunAdapter(),
         }),
       ],
     };
