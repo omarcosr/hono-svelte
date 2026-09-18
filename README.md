@@ -249,6 +249,24 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 
 `shell()` also exposes `availableEntries()` for diagnostics.
 
+#### Coexistence with other renderers
+
+`c.render(entry)` rides on hono's renderer mechanism — one renderer per
+request, **last-registered wins** (the same contract as hono's own
+`hono/jsx` `jsx-renderer`). In practice:
+
+- Don't mix `shell()` with another renderer middleware (`jsxRenderer`,
+  streaming renderers) on overlapping paths — the last one registered
+  silently replaces the earlier one.
+- With more than one `shell()` (e.g. a `/admin/*` shell next to a `/*`
+  shell), register the **more specific one last** — it then overrides the
+  catch-all for its paths.
+- `c.render("some string")` (hono's default string renderer) is reinterpreted
+  by the shell as an entry name — under `strict` it fails loudly with the
+  available pages list. Use `c.html(...)` for raw string responses instead.
+
+These rules are pinned by `test/render-conflicts.test.ts`.
+
 ### `pages(options?)`
 
 Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entries.
