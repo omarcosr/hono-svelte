@@ -74,15 +74,18 @@ const PACKAGE_JSON = `{
   "name": "my-hono-svelte-app",
   "type": "module",
   "private": true,
+  "engines": {
+    "bun": ">=1.4",
+    "node": ">=26"
+  },
   "scripts": {
     "dev": "vite",
     "build": "bun run build:client && bun run build:server",
     "build:client": "vite build --mode client",
     "build:server": "vite build --mode production",
-    "build:node": "vite build --mode production --config vite.config.node.ts",
     "typecheck": "tsc --noEmit",
     "start": "bun ./dist/index.js",
-    "start:node": "node ./dist/index-node.js"
+    "start:node": "node ./dist/index.js"
   },
   "dependencies": {
     "hono": "^4",
@@ -90,7 +93,6 @@ const PACKAGE_JSON = `{
     "svelte": "^5"
   },
   "devDependencies": {
-    "@hono/node-server": "^2",
     "@hono/vite-build": "^1",
     "@hono/vite-dev-server": "^0",
     "@sveltejs/vite-plugin-svelte": "^7",
@@ -111,66 +113,13 @@ const TSCONFIG_JSON = `{
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["vite/client", "node"]
   },
-  "include": ["src/**/*", "vite.config.ts", "vite.config.node.ts"],
-  "exclude": ["node_modules", "dist", "dist-node"]
+  "include": ["src/**/*", "vite.config.ts"],
+  "exclude": ["node_modules", "dist"]
 }
 `;
 
 const GITIGNORE_TEXT = `node_modules
 dist
-dist-node
-`;
-
-const VITE_CONFIG_NODE = `// Node variant (plain node, no Bun globals).
-// Same app, @hono/node-server runtime. Run:
-//   npm run build:node && npm run start:node   (or: node ./dist/index-node.js)
-// Bun users ignore this file — vite.config.ts is the default.
-//
-// NOTE: this config avoids deep ESM subpaths ("@hono/vite-build/node").
-// Vite loads vite.config.* through require() under plain node, where those
-// subpaths fail to resolve (externalize-deps). The "@hono/node-server"
-// imports below are CJS-safe, and the tiny entry plugin is inline.
-import { serveStatic } from "@hono/node-server/serve-static";
-import { serve } from "@hono/node-server";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { pages } from "hono-svelte/vite";
-import { defineConfig } from "vite";
-
-const appPages = pages({ dts: true });
-
-const nodeEntryId = "virtual:hono-svelte-node-entry";
-const nodeEntryResolved = "\\0" + nodeEntryId;
-
-const nodeEntryPlugin = {
-  name: "hono-svelte-node-entry",
-  resolveId(id: string) {
-    if (id === nodeEntryId) return nodeEntryResolved;
-    return null;
-  },
-  load(id: string) {
-    if (id !== nodeEntryResolved) return null;
-    return [
-      'import { Hono } from "hono";',
-      'import { serveStatic } from "@hono/node-server/serve-static";',
-      'import { serve } from "@hono/node-server";',
-      'import app from "/src/routes/index.ts";',
-      "const mainApp = new Hono();",
-      'mainApp.use("/static/*", serveStatic({ root: "./dist-node" }));',
-      "mainApp.route('/', app);",
-      "serve({ fetch: mainApp.fetch, port: 3000 });",
-      "export default mainApp;",
-    ].join("\\n");
-  },
-};
-
-export default defineConfig({
-  plugins: [svelte(), appPages, nodeEntryPlugin],
-  build: {
-    outDir: "./dist-node",
-    ssr: true,
-    rollupOptions: { input: nodeEntryId, output: { entryFileNames: "index.js" } },
-  },
-});
 `;
 
 const INDEX_SVELTE = `<main>
@@ -305,7 +254,6 @@ export function initFiles(flavor: InitFlavor = "minimal"): InitFile[] {
     { path: ".gitignore", content: GITIGNORE_TEXT, skipIfExists: true },
     { path: "src/env.d.ts", content: ENV_DTS, skipIfExists: true },
     { path: "vite.config.ts", content: VITE_CONFIG, skipIfExists: true },
-    { path: "vite.config.node.ts", content: VITE_CONFIG_NODE, skipIfExists: true },
     { path: "src/styles.css", content: STYLES_CSS, skipIfExists: true },
     { path: "src/pages/index.svelte", content: INDEX_SVELTE, skipIfExists: true },
     { path: "src/pages/hello.svelte", content: HELLO_SVELTE, skipIfExists: true },
