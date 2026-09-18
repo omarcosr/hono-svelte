@@ -10,9 +10,11 @@
     "start": "bun ./dist/index.js"
   },
   "dependencies": {
+    "@hono/typebox-validator": "^1.1.0",
     "hono": "^4.13.7",
     "hono-svelte": "file:../..",
-    "svelte": "^5.57.0"
+    "svelte": "^5.57.0",
+    "typebox": "1.3.31"
   },
   "devDependencies": {
     "@hono/vite-build": "^1.11.1",
