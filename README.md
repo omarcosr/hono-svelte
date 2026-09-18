@@ -15,7 +15,7 @@ Real sites and dashboards mix simple pages (landing, login, terms) with interact
 
 ## Installation
 
-Requires Bun 1+, Hono 4, Svelte 5, and Vite 6/7/8. (Works with Node 22+ too.)
+Requires Bun 1.4+, Node 26+, Hono 4, Svelte 5, Vite 8, and TypeScript 7.
 
 ```sh
 bun add hono-svelte
@@ -126,7 +126,9 @@ Works for static (zero-JS) pages too: the shell passes `data` as SSR props **and
 app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
 ```
 
-Large payloads trigger a one-time `console.warn` (default limit 100KB, `shell({ dataLimit })`).
+Declare `export type Data` in the page's `<script module>` to type it per page — see [per-page data typing](#per-page-data-typing).
+
+Large payloads trigger a `console.warn` — once per page (default limit 100KB, `shell({ dataLimit })`).
 Anything sensitive stays in the API (`hc<AppType>`, HttpOnly cookie). Never put secrets in `data`.
 
 ## Status, headers and per-page head
@@ -180,6 +182,8 @@ c.render("dashboard/page1", { data: { title: "Page 1", description: "..." } });
 
 Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect them; `layouts: false` restores legacy ignore).
 
+> **Hydration wrapper:** each layout level wraps the page's SSR output in one `<div>` (a Svelte 5 raw-snippet requirement — an empty snippet render breaks hydration). The wrapper is hydration-safe, but it is part of the DOM: account for it in CSS selectors (e.g. `:global(> div)`).
+
 
 ## Error pages
 
@@ -207,9 +211,15 @@ nested layout, and a typed API (`hc<AppType>`) — open `/auth`, sign in, explor
 `/dashboard`. (npm/pnpm work too: `npx hono-svelte init`, `npm install`.)
 
 ```sh
+bunx hono-svelte add page blog/post-1  # create src/pages/blog/post-1.svelte
 bunx hono-svelte doctor                # check dist, link and vite config
 bunx hono-svelte doctor --app=./my-app # check another app directory
 ```
+
+`add page <name>` writes a static page (no `<script>` → zero JS; add one to
+hydrate on the client). Existing files are skipped, traversal names are
+refused, and the default pagesDir is `src/pages` (a custom one set via
+`pages({ pagesDir })` is not visible to the CLI — adjust the path manually).
 
 ## API
 
@@ -229,11 +239,12 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 | `head` | `""` | Extra HTML in `<head>` (fonts, meta tags) |
 | `nonce` | — | CSP nonce string or `(c) => string` (applied to shell `<script>`/`<link>`) |
 | `preload` | `true` in prod | `<link rel="modulepreload">` for the entry (+ manifest imports) |
-| `prefetch` | `false` | `"all"` prefetches other entries; `"hover"` injects a hover-prefetch script |
+| `prefetch` | `false` | `"all"` emits `modulepreload` for other entries; `"hover"` injects a script that preloads them on link hover |
 | `dataLimit` | `102400` | Warn once above this many `data` bytes (`false` disables) |
 | `status` | `200` | Default response status |
 | `headers` | `{}` | Default response headers (per-render `headers` merge over them) |
 | `strict` | `true` | Unknown entries throw a dev-friendly error; `false` disables |
+| `ssrFallback` | `false` | SSR failures log and fall back to client rendering instead of a 500 |
 | `knownEntries` | auto from manifest | Override the page list used by strict mode and prefetch |
 
 `shell()` also exposes `availableEntries()` for diagnostics.
@@ -250,7 +261,7 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 | `dts` | `false` | Typed `c.render` entries: `true` writes `src/hono-svelte-entries.d.ts`, a string sets a custom path |
 | `alwaysClient` | `[]` | Pages that always get JS, even without `<script>` |
 
-Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `types()` (entry union), `typeDeclarations()` (hono module snippet), `dtsPath()` / `writeDts()` (generated `.d.ts`), `validateConfig()` (fail fast on bad Vite setup).
+Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `dataTypes()` (extracted `Data` declarations), `types()` (entry union), `typeDeclarations()` (hono module snippet), `dtsPath()` / `writeDts()` (generated `.d.ts`), `validateConfig()` (fail fast on bad Vite setup).
 
 ### Typing `c.render`
 
@@ -291,13 +302,56 @@ declare module "hono" {
 }
 ```
 
-`data` stays `Record<string, unknown>` — per-page payload types are a future feature. Programmatic access: `pages().types()` → `"admin" | "home"`, `pages().typeDeclarations()` for the snippet, `dtsPath()` / `writeDts()` for the file.
+`data` stays `Record<string, unknown>` by default — declare a `Data` type in the page for per-page typing (below). Programmatic access: `pages().types()` → `"admin" | "home"`, `pages().typeDeclarations()` for the snippet, `dtsPath()` / `writeDts()` for the file.
+
+### Per-page data typing
+
+Declare the page payload once — the `Data` type in a `<script module>` — and reuse it as the page props:
+
+```svelte
+<!-- src/pages/dashboard.svelte -->
+<script module lang="ts">
+  export type Data = { plan: string; seats: number };
+</script>
+
+<script lang="ts">
+  let { plan, seats }: Data = $props();
+</script>
+
+<h1>{plan} — {seats} seats</h1>
+```
+
+With `pages({ dts: true })`, the generated `.d.ts` adds a typed overload per
+page, so `c.render("dashboard", { data: { plan: "pro" } })` is checked by
+`tsc` — a missing `plan` fails the typecheck instead of shipping `undefined`
+to the client:
+
+```ts
+// generated (excerpt)
+type HonoSvelteData_dashboard = { plan: string; seats: number };
+
+declare module "hono" {
+  interface ContextRenderer {
+    (entryName: "dashboard", props?: import("hono-svelte").RenderProps<HonoSvelteData_dashboard>): Response | Promise<Response>;
+    (entryName: HonoSvelteEntries, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
+  }
+}
+```
+
+The `Data` declaration is inlined verbatim into the dts, so it must be
+**self-contained** — inline shapes or built-ins only. References to imported
+types can't be resolved from the dts location; such pages keep
+`Record<string, unknown>` data with a one-time warning. Both
+`export type Data = ...` and `export interface Data { ... }` work (including
+legacy `<script context="module">`). `pages().dataTypes()` exposes the
+extracted declarations.
 
 ## Production tips
 
 - Pass the Vite manifest to `shell({ assets: manifest })` for hashed files; manifest CSS and shared chunks are emitted automatically (`modulepreload`).
 - Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
+- The shell emits a neutral `<body>` (no framework classes) — style `body`/`html` from your global stylesheet (`stylesHref`), e.g. `body { @apply bg-base-200 min-h-screen text-base-content; }` with Tailwind/DaisyUI.
 - Run both client and server builds before serving; the example in `examples/playground/` shows the full setup.
 
 ## Example

@@ -1,11 +1,11 @@
 import { Hono } from "hono";
+import { shell } from "hono-svelte";
 import api from "./api";
 import auth from "./auth";
-import dashboardPurchase from "./dashboard/purchase";
 import dashboard from "./dashboard/index";
 import dashboardPage1 from "./dashboard/page1";
+import dashboardPurchase from "./dashboard/purchase";
 import site from "./site";
-import { shell } from "hono-svelte";
 
 const app = new Hono();
 
@@ -21,4 +21,3 @@ const routes = app
 export type AppType = typeof routes;
 
 export default app;
-

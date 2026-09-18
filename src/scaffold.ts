@@ -96,8 +96,8 @@ const PACKAGE_JSON = `{
     "@hono/vite-build": "^1",
     "@hono/vite-dev-server": "^0",
     "@sveltejs/vite-plugin-svelte": "^7",
-    "@types/node": "^22",
-    "typescript": "^5",
+    "@types/node": "^26",
+    "typescript": "^7",
     "vite": "^8"
   }
 }
@@ -397,10 +397,6 @@ export type DoctorOptions = {
   appRoot?: string;
 };
 
-export function versionsMatch(_linkedVersion: string, _appWants: string): boolean {
-  return true;
-}
-
 export function doctorChecks(opts: DoctorOptions = {}): DoctorIssue[] {
   const packageRoot = opts.packageRoot ? resolve(opts.packageRoot) : process.cwd();
   const appRoot = opts.appRoot ? resolve(opts.appRoot) : process.cwd();
@@ -455,4 +451,33 @@ export function isSafeAppPath(appRoot: string, target: string): boolean {
   // Exact root itself is not a writable file, but treat as safe for symmetry
   // with the old check; callers only pass file paths.
   return nAbs === nRoot || nAbs.startsWith(nRoot + "/");
+}
+
+/**
+ * Entry name for `hono-svelte add page`: no traversal, no absolute paths,
+ * no null chars/backslashes, and never a `layout` (layouts are convention,
+ * not pages). `"blog/post-1"` is valid.
+ */
+export function isValidPageName(name: string): boolean {
+  if (!name || name.length > 200) return false;
+  if (name.startsWith("/") || name.startsWith(".")) return false;
+  if (name.includes("\\") || name.includes(String.fromCharCode(0))) return false;
+  const parts = name.split("/");
+  if (parts.some((p) => p.length === 0 || p === "." || p === "..")) return false;
+  if (name === "layout" || name.endsWith("/layout")) return false;
+  return true;
+}
+
+/** File + content written by `hono-svelte add page <name>` (null on invalid names). */
+export function newPageFile(name: string, pagesDir = "src/pages"): InitFile | null {
+  const clean = name.replace(/\.svelte$/, "");
+  if (!isValidPageName(clean)) return null;
+  const title = (clean.split("/").pop() ?? clean).replace(/[-_]/g, " ");
+  const content =
+    `<!-- src/pages/${clean}.svelte — created by \`hono-svelte add page\`.\n` +
+    `     This page has no script tag, so it ships as plain HTML (zero JS).\n` +
+    `     Add a script to hydrate it on the client, or declare \`export type Data\`\n` +
+    `     in a module script for typed data. -->\n` +
+    `<main>\n  <h1>${title}</h1>\n  <p>Edit src/pages/${clean}.svelte.</p>\n</main>\n`;
+  return { path: `${pagesDir}/${clean}.svelte`, content, skipIfExists: true };
 }

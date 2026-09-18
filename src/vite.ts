@@ -1,6 +1,7 @@
 import { existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getIds } from "./ids.js";
+import { extractPageDataType } from "./page-data.js";
 import {
   ENTRY_PREFIX,
   ENTRY_RESOLVED_PREFIX,
@@ -52,6 +53,8 @@ export type PagesPlugin = Plugin & {
   writeDts: () => string | null;
   /** Nested layout entryNames (or [] when `layouts: false`). */
   layouts: () => string[];
+  /** Extracted `Data` declarations per entry (per-page typed data), if any. */
+  dataTypes: () => Record<string, string>;
   /** Layout chain for an entry, outermost first (or [] for none). */
   layoutChain: (entryName: string) => string[];
   /**
@@ -85,15 +88,9 @@ type PageSpec = {
   isStatic: boolean;
   /** Layout entryNames, outermost first. Empty when `layouts: false` or none. */
   layouts: string[];
+  /** Extracted `Data` declaration (per-page typed data for the dts), if any. */
+  dataType?: string;
 };
-
-export type PagesConfigIssue = { code: string; message: string; fix: string };
-
-function checkPagesDir(_pagesDir: string): PagesConfigIssue | null {
-  return null;
-}
-
-void checkPagesDir;
 
 export function pages(options: PagesOptions = {}): PagesPlugin {
   const pagesDir = resolve(options.pagesDir ?? "src/pages");
@@ -110,6 +107,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   let vitePlugins: { name?: string }[] = [];
   let viteMode = "";
   let lastWrittenDts: string | null = null;
+  const warnedDataImports = new Set<string>();
 
   function computeLayouts(allFiles: string[]): LayoutSpec[] {
     if (!layoutsEnabled) return [];
@@ -182,13 +180,35 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
           }
         }
       }
-      const hasScript = /<script[\s>]/i.test(readFileSync(absFile, "utf8"));
+      const source = readFileSync(absFile, "utf8");
+      const hasScript = /<script[\s>]/i.test(source);
       // A page is static when it has no <script> — EVEN with layouts.
       // The shell SSRs the page and wraps it in the layout chain; the layout
       // files themselves are compiled into the page's client entry only when
       // the page needs JS. Layout-wrapped static pages ship zero JS.
       const isStatic = !hasScript && !alwaysClient.has(entryName);
-      result.push({ entryName, file, absFile, isStatic, layouts });
+      // Per-page typed data: `export type Data` / `interface Data` in a
+      // <script module> feeds a typed overload in the generated dts. The
+      // declaration is inlined verbatim, so it must be self-contained — a
+      // type referencing imports can't be resolved from the dts location.
+      const extracted = extractPageDataType(source);
+      let dataType: string | undefined;
+      if (extracted.declaration) {
+        if (extracted.importedRefs.length > 0) {
+          if (!warnedDataImports.has(entryName)) {
+            warnedDataImports.add(entryName);
+            console.warn(
+              `[hono-svelte] page "${entryName}": the Data type references imported ` +
+                `identifier(s) [${extracted.importedRefs.join(", ")}]. Per-page data typing ` +
+                `needs a self-contained type (inline shapes or built-ins only) — this page ` +
+                `keeps Record<string, unknown> data.`,
+            );
+          }
+        } else {
+          dataType = extracted.declaration;
+        }
+      }
+      result.push({ entryName, file, absFile, isStatic, layouts, dataType });
     }
     return result;
   }
@@ -217,7 +237,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
 
   function stateKey(): string {
     return listPages()
-      .map((p) => (p.isStatic ? "S:" : "C:") + p.entryName)
+      .map((p) => (p.isStatic ? "S:" : "C:") + p.entryName + (p.dataType ? "@" + p.dataType : ""))
       .join("|");
   }
 
@@ -228,22 +248,63 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     return isAbsolute(rel) ? rel : resolve(root, rel);
   }
 
-  function dtsSource(): string {
+  function dataTypeNames(): Map<string, string> {
+    const names = new Map<string, string>();
+    const used = new Set<string>();
+    for (const p of listPages()) {
+      if (!p.dataType) continue;
+      const base = "HonoSvelteData_" + p.entryName.replace(/[^A-Za-z0-9_$]/g, "_");
+      let name = base;
+      let n = 2;
+      while (used.has(name)) name = `${base}_${n++}`;
+      used.add(name);
+      names.set(p.entryName, name);
+    }
+    return names;
+  }
+
+  function typeDeclarations(): string {
     const names = listPages().map((p) => p.entryName);
     const typeName = "HonoSvelteEntries";
     const unionSrc = names.length === 0 ? "never" : names.map((n) => JSON.stringify(n)).join(" | ");
+    const dataNames = dataTypeNames();
+    const typed = listPages().filter((p) => p.dataType && dataNames.has(p.entryName));
+    const declarationFor = (p: PageSpec): string => {
+      const decl = (p.dataType as string).replace("Data", dataNames.get(p.entryName) as string);
+      return decl.endsWith(";") ? decl : decl + ";";
+    };
     return [
-      header,
-      `// Entries: ${names.length === 0 ? "(none)" : names.join(", ")}`,
-      "",
       `export type ${typeName} = ${unionSrc};`,
       "",
+      ...(typed.length > 0
+        ? [
+            "// Per-page data — `export type Data` / `interface Data` in each page's <script module>:",
+            ...typed.map((p) => declarationFor(p)),
+            "",
+          ]
+        : []),
       `declare module "hono" {`,
       `  interface ContextRenderer {`,
+      // Typed overloads come first, then the union catch-all: overload
+      // resolution tries them in order, entries without `Data` fall through.
+      ...typed.map(
+        (p) =>
+          `    (entryName: ${JSON.stringify(p.entryName)}, props?: import("hono-svelte").RenderProps<${dataNames.get(p.entryName)}>): Response | Promise<Response>;`,
+      ),
       `    (entryName: ${typeName}, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;`,
       `  }`,
       `}`,
       "",
+    ].join("\n");
+  }
+
+  function dtsSource(): string {
+    const names = listPages().map((p) => p.entryName);
+    return [
+      header,
+      `// Entries: ${names.length === 0 ? "(none)" : names.join(", ")}`,
+      "",
+      typeDeclarations(),
     ].join("\n");
   }
 
@@ -319,10 +380,6 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       "ssrPages.__allEntries = allEntries;",
       "ssrPages.__layouts = ssrLayouts;",
       "ssrPages.__clientEntries = clientEntries;",
-      "",
-      "export function hasClient(entryName) {",
-      "  return !Object.prototype.hasOwnProperty.call(ssrPages, entryName);",
-      "}",
       "",
     ].join("\n");
   }
@@ -465,6 +522,13 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       const page = listPages().find((p) => p.entryName === entryName);
       return page ? [...page.layouts] : [];
     },
+    dataTypes() {
+      const out: Record<string, string> = {};
+      for (const p of listPages()) {
+        if (p.dataType) out[p.entryName] = p.dataType;
+      }
+      return out;
+    },
     types() {
       const names = listPages().map((p) => p.entryName);
       if (names.length === 0) return "never";
@@ -477,19 +541,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       return writeDtsFile();
     },
     typeDeclarations() {
-      const names = listPages().map((p) => p.entryName);
-      const typeName = "HonoSvelteEntries";
-      const unionSrc = names.length === 0 ? "never" : names.map((n) => JSON.stringify(n)).join(" | ");
-      return [
-        `export type ${typeName} = ${unionSrc};`,
-        "",
-        `declare module "hono" {`,
-        `  interface ContextRenderer {`,
-        `    (entryName: ${typeName}, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;`,
-        `  }`,
-        `}`,
-        "",
-      ].join("\n");
+      return typeDeclarations();
     },
     validateConfig() {
       const issues: string[] = [];

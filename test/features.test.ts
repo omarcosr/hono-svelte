@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Context } from "hono";
 import { renderHead } from "../src/head.js";
 import {
   CACHE_IMMUTABLE,
@@ -13,7 +14,14 @@ import {
   manifestImportsFor,
 } from "../src/assets.js";
 import { errorHandler, notFoundHandler } from "../src/handlers.js";
-import { checkAppLink, doctorChecks, initFiles, isSafeAppPath } from "../src/scaffold.js";
+import {
+  checkAppLink,
+  doctorChecks,
+  initFiles,
+  isSafeAppPath,
+  isValidPageName,
+  newPageFile,
+} from "../src/scaffold.js";
 import { existsSync } from "node:fs";
 
 describe("renderHead", () => {
@@ -78,7 +86,8 @@ describe("handlers", () => {
         return "nf";
       },
     };
-    expect(await notFoundHandler()(c)).toBe("nf");
+    const res = (await notFoundHandler()(c as unknown as Context)) as unknown;
+    expect(res).toBe("nf");
     expect(seen!.entry).toBe("404");
     expect((seen!.props as { status: number }).status).toBe(404);
   });
@@ -90,8 +99,8 @@ describe("handlers", () => {
     };
     const res = (await errorHandler({ entry: "oops", log: (e) => logged.push(e) })(
       new Error("boom"),
-      c,
-    )) as { entry: string; props: { status: number } };
+      c as unknown as Context,
+    )) as unknown as { entry: string; props: { status: number } };
     expect(res.entry).toBe("oops");
     expect(res.props.status).toBe(500);
     expect(logged.length).toBe(1);
@@ -168,6 +177,54 @@ describe("scaffold", () => {
       ]) {
         expect(existsSync(join(dir, p)), p).toBe(true);
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("isValidPageName accepts entry names, rejects traversal and layouts", () => {
+    expect(isValidPageName("blog/post-1")).toBe(true);
+    expect(isValidPageName("a")).toBe(true);
+    expect(isValidPageName("../evil")).toBe(false);
+    expect(isValidPageName("/abs")).toBe(false);
+    expect(isValidPageName("a/../b")).toBe(false);
+    expect(isValidPageName("a//b")).toBe(false);
+    expect(isValidPageName("layout")).toBe(false);
+    expect(isValidPageName("dash/layout")).toBe(false);
+    expect(isValidPageName("")).toBe(false);
+  });
+
+  it("newPageFile builds a static page under src/pages", () => {
+    const file = newPageFile("blog/post-1");
+    expect(file?.path).toBe("src/pages/blog/post-1.svelte");
+    expect(file?.skipIfExists).toBe(true);
+    expect(file?.content).not.toContain("<script");
+    expect(file?.content).toContain("blog/post-1");
+    expect(file?.content).toContain("<h1>post 1</h1>");
+    expect(newPageFile("../evil")).toBeNull();
+    expect(newPageFile("blog.svelte")?.path).toBe("src/pages/blog.svelte");
+  });
+
+  it("`add page` CLI writes the file, skips existing, refuses bad names (dist smoke)", () => {
+    const pkgRoot = resolve(fileURLToPath(import.meta.url), "..", "..");
+    const dir = mkdtempSync(join(tmpdir(), "hs-add-"));
+    try {
+      const run = (args: string[]) =>
+        spawnSync(process.execPath, [join(pkgRoot, "dist", "cli.js"), ...args], {
+          stdio: "pipe",
+          encoding: "utf8",
+        });
+      const ok = run(["add", "page", "demo/nested", `--app=${dir}`]);
+      expect(ok.status).toBe(0);
+      expect(existsSync(join(dir, "src", "pages", "demo", "nested.svelte"))).toBe(true);
+      // second run skips the existing file
+      const again = run(["add", "page", "demo/nested", `--app=${dir}`]);
+      expect(again.status).toBe(0);
+      expect(String(again.stdout)).toContain("skipping");
+      // traversal names are refused
+      const bad = run(["add", "page", "../evil", `--app=${dir}`]);
+      expect(bad.status).toBe(1);
+      expect(String(bad.stderr)).toContain("invalid page name");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -1,4 +1,5 @@
 node_modules
 dist
+coverage
 examples/playground/node_modules
 examples/playground/dist

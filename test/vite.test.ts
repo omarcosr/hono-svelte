@@ -3,10 +3,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getIds } from "../src/ids.js";
 import { MANIFEST_RESOLVED, MANIFEST_ID, ENTRY_PREFIX } from "../src/virtual.js";
 import { pages } from "../src/vite.js";
+import { newPageFile } from "../src/scaffold.js";
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function makePlugin() {
@@ -44,7 +45,7 @@ describe("pages() plugin", () => {
     expect(manifest).toContain('clientEntries = ["admin"]');
     expect(manifest).toContain('staticEntries = ["home"]');
     expect(manifest).toContain('"home": () => import("/test/fixtures/pages/home.svelte")');
-    expect(manifest).toContain("hasClient");
+    expect(manifest).toContain("__clientEntries");
   });
 
   it("virtual entry embeds the opaque ids and the mount", () => {
@@ -161,6 +162,143 @@ describe("pages() plugin", () => {
     } finally {
       rmSync(pagesDir, { recursive: true, force: true });
       rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("dataTypes() extracts export type Data from module scripts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-data-"));
+    try {
+      writeFileSync(
+        join(dir, "typed.svelte"),
+        '<script module lang="ts">export type Data = { plan: string };</script>\n<h1>typed</h1>\n',
+      );
+      writeFileSync(join(dir, "plain.svelte"), "<h1>plain</h1>\n");
+      const out = join(dir, "entries.d.ts");
+      const plugin = pages({ pagesDir: dir, dts: out });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      expect(plugin.dataTypes()).toEqual({ typed: "type Data = { plan: string };" });
+      const content = readFileSync(out, "utf8");
+      expect(content).toContain("type HonoSvelteData_typed = { plan: string };");
+      expect(content).toContain(
+        '(entryName: "typed", props?: import("hono-svelte").RenderProps<HonoSvelteData_typed>): Response | Promise<Response>;',
+      );
+      // typed overload first, union catch-all stays last
+      expect(content.indexOf("HonoSvelteData_typed")).toBeLessThan(
+        content.indexOf("entryName: HonoSvelteEntries"),
+      );
+      // the union catch-all is still present for untyped entries
+      expect(content).toContain("(entryName: HonoSvelteEntries, props?: ");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("interface Data and nested entry names get sanitized dts names", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-data2-"));
+    try {
+      mkdirSync(join(dir, "dash"), { recursive: true });
+      writeFileSync(
+        join(dir, "dash", "index.svelte"),
+        '<script module lang="ts">export interface Data { seats: number }</script>\n<h1>d</h1>\n',
+      );
+      const out = join(dir, "entries.d.ts");
+      const plugin = pages({ pagesDir: dir, dts: out });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      const content = readFileSync(out, "utf8");
+      expect(content).toContain("interface HonoSvelteData_dash_index { seats: number };");
+      expect(content).toContain(
+        '(entryName: "dash/index", props?: import("hono-svelte").RenderProps<HonoSvelteData_dash_index>): Response | Promise<Response>;',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("Data types referencing imports are skipped with a one-time warning", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-data3-"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      writeFileSync(
+        join(dir, "bad.svelte"),
+        '<script module lang="ts">\n  import type { Plan } from "./plan";\n  export type Data = { plan: Plan };\n</script>\n<h1>bad</h1>\n',
+      );
+      const out = join(dir, "entries.d.ts");
+      const plugin = pages({ pagesDir: dir, dts: out });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      plugin.buildStart(); // refresh again: still one warning
+      expect(plugin.dataTypes()).toEqual({});
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('page "bad"');
+      expect(warn.mock.calls[0][0]).toContain("Plan");
+      const content = readFileSync(out, "utf8");
+      expect(content).not.toContain("HonoSvelteData_bad");
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("dts regenerates when a page's Data type changes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-data4-"));
+    const out = join(dir, "entries.d.ts");
+    try {
+      writeFileSync(
+        join(dir, "a.svelte"),
+        '<script module lang="ts">export type Data = { plan: string };</script>\n<h1>a</h1>\n',
+      );
+      const plugin = pages({ pagesDir: dir, dts: out });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      expect(readFileSync(out, "utf8")).toContain("plan: string");
+      writeFileSync(
+        join(dir, "a.svelte"),
+        '<script module lang="ts">export type Data = { plan: string; seats: number };</script>\n<h1>a</h1>\n',
+      );
+      plugin.buildStart();
+      expect(readFileSync(out, "utf8")).toContain("seats: number");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("`add page` template is detected as a static page (no script-tag false positives)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-add-static-"));
+    try {
+      const template = newPageFile("demo")?.content ?? "";
+      writeFileSync(join(dir, "demo.svelte"), template);
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      expect(plugin.staticEntries()).toEqual(["demo"]);
+      expect(plugin.hasClient("demo")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("colliding sanitized Data names get numeric suffixes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-data5-"));
+    const out = join(dir, "entries.d.ts");
+    try {
+      writeFileSync(
+        join(dir, "a-b.svelte"),
+        '<script module lang="ts">export type Data = { x: 1 };</script>\n<h1>1</h1>\n',
+      );
+      writeFileSync(
+        join(dir, "a_b.svelte"),
+        '<script module lang="ts">export type Data = { y: 2 };</script>\n<h1>2</h1>\n',
+      );
+      const plugin = pages({ pagesDir: dir, dts: out });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      const content = readFileSync(out, "utf8");
+      expect(content).toContain("type HonoSvelteData_a_b = { x: 1 };");
+      expect(content).toContain("type HonoSvelteData_a_b_2 = { y: 2 };");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

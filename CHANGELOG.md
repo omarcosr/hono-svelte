@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.5.0
+
+- **Per-page data typing (opt-in, `pages({ dts: true })`)**: declare
+  `export type Data` (or `interface Data`) in a page's `<script module>` and
+  the generated `.d.ts` adds a typed overload per page —
+  `c.render("dashboard", { data })` is checked by `tsc` (a missing/mistyped
+  field fails the typecheck instead of shipping `undefined`). The declaration
+  is inlined verbatim, so it must be self-contained; types that reference
+  imports are skipped with a one-time warning and keep
+  `Record<string, unknown>` data. `RenderProps` is now generic
+  (`RenderProps<TData = Record<string, unknown>>`) and `pages().dataTypes()`
+  exposes the extractions. The dts also regenerates when a page's `Data`
+  type changes (dev watcher + `buildStart`).
+- **Neutral `<body>`**: the shell no longer hardcodes DaisyUI classes
+  (`bg-base-200 min-h-screen text-base-content`) — it emits a plain,
+  CSS-framework-agnostic document. Style `body`/`html` from your global
+  stylesheet instead (`body { background: var(--color-base-200); ... }`, or
+  `@apply` with Tailwind — the playground does exactly that in
+  `styles.css`). **Breaking** for apps relying on the hardcoded classes.
+- **`shell({ ssrFallback })`**: when SSR of a page throws at request time,
+  log the error and fall back to client rendering (entry script) instead of
+  a 500. Default `false` keeps the previous behavior.
+- `prefetch: "all"` / `"hover"` now emit `rel="modulepreload"` (prefetch on a
+  module URL could double-fetch in some browsers; modulepreload also warms
+  the entry's import graph).
+- `dataLimit` warning fires once per **(page, limit)** instead of once per
+  process — a second oversized page is reported too, with the entry name in
+  the message.
+- **Removed dead stubs**: `versionsMatch()` (always returned `true`), the
+  unused `hasClient` export from the ssr-manifest stub/virtual manifest, and
+  the no-op `checkPagesDir`. **Breaking: `versionsMatch` is no longer
+  exported.**
+- Fully typed handlers/middleware: `notFoundHandler()` / `errorHandler()`
+  match Hono's `NotFoundHandler`/`ErrorHandler` signatures and `shell()` no
+  longer uses `any` internally.
+- **CLI: `hono-svelte add page <name>`** — scaffolds
+  `src/pages/<name>.svelte` (static by default, skip-if-exists, traversal
+  refused). `isValidPageName()` / `newPageFile()` exported for tests.
+- Metadata: `engines` now declares `bun >= 1.4` and `node >= 26`, the
+  `./package.json` export subpath was added, and TypeScript 7 builds the
+  package.
+- **Security floors in `peerDependencies`**: `hono ^4.13.8`, `svelte ^5.57.0`,
+  `vite ^8.3.0` — every published advisory sits outside these floors
+  (hono < 4.12.12 and 4.12.0–4.12.33, patched in 4.12.34; svelte ≤ 5.55.6,
+  patched in 5.55.7; vite ≤ 8.0.15, patched in 8.0.16; transitive `devalue`
+  resolves to the patched 5.9.2, which also closes CVE-2026-81176). The
+  versions installed in the repo and in the example are the latest published
+  and none is affected by a known advisory — the ranges just avoid
+  advertising vulnerable versions to consumers and scanners.
+- CI: ubuntu + windows runners (Windows-only regressions like the old
+  `isSafeAppPath` bug are caught now), coverage via `@vitest/coverage-v8`
+  with thresholds (`npm test` runs it), all on the officially supported
+  runtimes (Node 26, TS 7, Vite 8, Bun 1.4+).
+- `hono-svelte init` now scaffolds TypeScript 7 + `@types/node` 26 in the
+  generated app.
+
 ## 0.4.2
 
 - `hono-svelte init` now scaffolds a complete runnable app (works with

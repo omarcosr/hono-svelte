@@ -150,7 +150,27 @@ describe("shell", () => {
       await app.request("/");
       await app.request("/");
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain("page data is");
+      expect(warn.mock.calls[0][0]).toContain('page "admin" data is');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("data limit warns once per page, not once per process", async () => {
+    __resetDataLimitWarned();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const app = new Hono();
+      app.use("/*", shell({ dataLimit: 10 } as never));
+      app.get("/a", (c) => c.render("admin", { data: { big: "0123456789abcdef" } }));
+      app.get("/b", (c) => c.render("home", { data: { big: "0123456789abcdef" } }));
+      app.get("/c", (c) => c.render("admin", { data: { big: "0123456789abcdef" } }));
+      await app.request("/a");
+      await app.request("/b");
+      await app.request("/c");
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[0][0]).toContain('"admin"');
+      expect(warn.mock.calls[1][0]).toContain('"home"');
     } finally {
       warn.mockRestore();
     }
@@ -175,13 +195,68 @@ describe("shell", () => {
     expect(html).toContain('href="/static/chunks/chunk-XYZ.js"');
   });
 
-  it("prefetch all emits links for other entries", async () => {
+  it("prefetch all emits modulepreload links for other entries", async () => {
     const app = new Hono();
     app.use("/*", shell({ knownEntries: ["a", "b"], prefetch: "all", isProd: true } as never));
     app.get("/", (c) => c.render("a"));
     const html = await (await app.request("/")).text();
-    expect(html).toContain('rel="prefetch" href="/static/b.js"');
-    expect(html).not.toContain('rel="prefetch" href="/static/a.js"');
+    expect(html).toContain('rel="modulepreload" href="/static/b.js"');
+    // exactly two modulepreload links: the current entry (prod preload) + the
+    // prefetch of the other entry — never a prefetch of the current one twice.
+    expect((html.match(/rel="modulepreload"/g) ?? []).length).toBe(2);
+  });
+
+  it("prefetch hover injects a modulepreload script for other client entries", async () => {
+    const app = new Hono();
+    app.use("/*", shell({ knownEntries: ["a", "b"], prefetch: "hover", isProd: true } as never));
+    app.get("/", (c) => c.render("a"));
+    const html = await (await app.request("/")).text();
+    expect(html).toContain("mouseover");
+    expect(html).toContain("modulepreload");
+    expect(html).toContain('"/static/b.js"');
+  });
+
+  it("body is framework-agnostic (no hardcoded classes)", async () => {
+    const app = new Hono();
+    app.use("/*", shell({}));
+    app.get("/", (c) => c.render("admin"));
+    const html = await (await app.request("/")).text();
+    expect(html).toContain("<body><div");
+    expect(html).not.toContain("<body class=");
+    expect(html).not.toContain("bg-base-200");
+  });
+
+  it("ssrFallback:false keeps SSR errors as 500s", async () => {
+    const app = new Hono();
+    const boom = async () => {
+      throw new Error("ssr boom");
+    };
+    app.use("/*", shell({ ssrPages: { broken: boom } }));
+    app.get("/", (c) => c.render("broken"));
+    const res = await app.request("/");
+    expect(res.status).toBe(500);
+  });
+
+  it("ssrFallback:true falls back to client rendering when SSR throws", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const app = new Hono();
+      const boom = async () => {
+        throw new Error("ssr boom");
+      };
+      app.use("/*", shell({ ssrPages: { broken: boom }, ssrFallback: true }));
+      app.get("/", (c) => c.render("broken"));
+      const res = await app.request("/");
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('script type="module"');
+      expect(html).toContain(`id="${getIds("broken").rootId}"`);
+      expect(err.mock.calls.some((call) => String(call[0]).includes('SSR failed for "broken"'))).toBe(
+        true,
+      );
+    } finally {
+      err.mockRestore();
+    }
   });
 
   it("nested layouts wrap SSR html inside out", async () => {

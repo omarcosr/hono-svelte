@@ -15,9 +15,3 @@ export const layoutEntries: string[] = [];
 export const clientEntries: string[] = [];
 
 export const staticEntries: string[] = [];
-
-export function hasClient(_entryName: string): boolean {
-  return true;
-}
-
-void hasClient;

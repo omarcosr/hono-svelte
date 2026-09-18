@@ -6,10 +6,11 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  doctorChecks,
   checkAppLink,
+  doctorChecks,
   initFiles,
   isSafeAppPath,
+  newPageFile,
   type InitFlavor,
 } from "./scaffold.js";
 
@@ -61,6 +62,39 @@ function packageRootForCli(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
+function addPage(): void {
+  const name = args[2];
+  if (!name) {
+    console.error("[hono-svelte] usage: hono-svelte add page <name> (e.g. blog/post-1)");
+    process.exitCode = 1;
+    return;
+  }
+  const file = newPageFile(name);
+  if (!file) {
+    console.error(
+      `[hono-svelte] invalid page name: ${name} — use a relative entry name like "blog/post-1" (no ../, no leading /, not "layout")`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const dest = join(appRoot, file.path);
+  if (!isSafeAppPath(appRoot, dest)) {
+    console.error(`[hono-svelte] refusing to write outside ${appRoot}: ${file.path}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (existsSync(dest)) {
+    console.log(`[hono-svelte] exists, skipping: ${file.path}`);
+    return;
+  }
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, file.content);
+  const entryName = file.path.replace(/^src\/pages\//, "").replace(/\.svelte$/, "");
+  console.log(`[hono-svelte] wrote ${file.path}`);
+  console.log(`[hono-svelte] next: render it from a route — c.render("${entryName}")`);
+  console.log(`[hono-svelte] (default pagesDir is src/pages; set a custom one via pages({ pagesDir }))`);
+}
+
 function doctor(): void {
   const packageRoot = packageRootForCli();
   const issues = doctorChecks({ packageRoot, appRoot });
@@ -79,8 +113,11 @@ function doctor(): void {
 
 if (command === "init") init();
 else if (command === "doctor") doctor();
+else if (command === "add" && args[1] === "page") addPage();
 else {
-  console.log("Usage: hono-svelte <init|doctor> [--app=<dir>] [--full]");
-  console.log("  init [--full]   scaffold a runnable app (minimal by default)");
+  console.log("Usage: hono-svelte <init|doctor|add page <name>> [--app=<dir>] [--full]");
+  console.log("  init [--full]            scaffold a runnable app (minimal by default)");
+  console.log("  add page <name>          create src/pages/<name>.svelte (static, zero JS)");
+  console.log("  doctor [--app=<dir>]     check dist, link and vite config");
   process.exitCode = 1;
 }
