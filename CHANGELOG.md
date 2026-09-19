@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.1
+
+- **Scaffold hardening** (`hono-svelte init`):
+  - the generated `package.json` pins the security floors
+    (`hono ^4.13.8`, `svelte ^5.57.0`, `vite ^8.3.0`) — the previous
+    `^4`/`^5`/`^8` ranges resolved versions with known advisories; a
+    regression test keeps the floors in sync with the package peers.
+  - `init` writes an initial `src/hono-svelte-entries.d.ts` stub
+    (plain-string renderer): `tsc` right after `init` used to fail on
+    `c.render(entry, props)` (2 args vs hono's 1-arg default renderer)
+    because the typed dts only exists after the first vite run;
+    `pages({ dts: true })` replaces the stub with the typed union on the
+    first `dev`/`build`.
+- **`c.render()` coexistence contract**: 6 tests pin the shell against
+  hono's renderer semantics — `c.render(string)` (default renderer) is
+  reinterpreted as an entry name under the shell (strict 500); renderer
+  middlewares on the same path pattern are last-registered-wins; and
+  **path-scoped coexistence works**: default-render routes and
+  jsxRenderer-style middlewares keep working next to a `shell()` mounted on
+  its own path (`app.use("/pages/*", shell())`). Documented in the README
+  ("Coexistence with other renderers").
+- **CI**: new `scaffold` job smoke-tests `init --full` end to end (install
+  with the local package via `file:` → typecheck → build), guarding the
+  inline templates against drift from the (unpublished) playground example.
+
 ## 0.5.0
 
 - **Per-page data typing (opt-in, `pages({ dts: true })`)**: declare
@@ -54,15 +79,7 @@
   with thresholds (`npm test` runs it), all on the officially supported
   runtimes (Node 26, TS 7, Vite 8, Bun 1.4+).
 - `hono-svelte init` now scaffolds TypeScript 7 + `@types/node` 26 in the
-  generated app, and the generated `package.json` carries the same security
-  floors as the package's peers (`hono ^4.13.8`, `svelte ^5.57.0`,
-  `vite ^8.3.0`) — scaffolded apps never resolve a version with a known
-  advisory. `init` also writes an initial `src/hono-svelte-entries.d.ts`
-  stub (plain-string renderer) so `tsc` is green right after init —
-  `pages({ dts: true })` replaces it with the typed union on the first
-  dev/build run. A new CI job smoke-tests the scaffold end to end
-  (init --full → install → typecheck → build) against the local package,
-  guarding the templates against drift from the playground.
+  generated app.
 
 ## 0.4.2
 
