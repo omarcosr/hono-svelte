@@ -55,4 +55,32 @@ describe("c.render coexistence contract", () => {
     const res = await app.request("/");
     expect(await res.text()).toContain("JSX:home");
   });
+
+  it("path-scoped: default string-render routes coexist with a scoped shell", async () => {
+    const app = new Hono();
+    app.use("/pages/*", shell({ knownEntries: ["home"] }));
+    app.get("/about", (c) => c.render("About page"));
+    app.get("/pages/home", (c) => c.render("home"));
+    // hono's default renderer stays intact where the shell does not run
+    expect(await (await app.request("/about")).text()).toBe("About page");
+    // and the shell serves its own paths
+    const html = await (await app.request("/pages/home")).text();
+    expect(html).toContain("<!doctype html>");
+  });
+
+  it("path-scoped: jsx-renderer on /* + shell on /pages/* (specific last) coexist", async () => {
+    const app = new Hono();
+    const jsxLikeRenderer = async (c: any, next: any) => {
+      c.setRenderer((output: any) => c.html(`JSX:${String(output)}`));
+      await next();
+    };
+    app.use("/*", jsxLikeRenderer);
+    app.use("/pages/*", shell({ knownEntries: ["home"] }));
+    app.get("/legacy", (c) => c.render("Legacy JSX route"));
+    app.get("/pages/home", (c) => c.render("home"));
+    expect(await (await app.request("/legacy")).text()).toBe("JSX:Legacy JSX route");
+    const html = await (await app.request("/pages/home")).text();
+    expect(html).not.toContain("JSX:");
+    expect(html).toContain("<!doctype html>");
+  });
 });
