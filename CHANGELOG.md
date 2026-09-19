@@ -54,7 +54,15 @@
   with thresholds (`npm test` runs it), all on the officially supported
   runtimes (Node 26, TS 7, Vite 8, Bun 1.4+).
 - `hono-svelte init` now scaffolds TypeScript 7 + `@types/node` 26 in the
-  generated app.
+  generated app, and the generated `package.json` carries the same security
+  floors as the package's peers (`hono ^4.13.8`, `svelte ^5.57.0`,
+  `vite ^8.3.0`) — scaffolded apps never resolve a version with a known
+  advisory. `init` also writes an initial `src/hono-svelte-entries.d.ts`
+  stub (plain-string renderer) so `tsc` is green right after init —
+  `pages({ dts: true })` replaces it with the typed union on the first
+  dev/build run. A new CI job smoke-tests the scaffold end to end
+  (init --full → install → typecheck → build) against the local package,
+  guarding the templates against drift from the playground.
 
 ## 0.4.2
 

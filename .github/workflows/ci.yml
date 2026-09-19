@@ -23,6 +23,27 @@ jobs:
       - run: npm test
       - run: npx publint
 
+  scaffold:
+    # Drift guard: proves `init --full` yields an app that installs,
+    # typechecks and builds against THIS commit (hono-svelte resolved from
+    # the repo, not from the registry). Locally validated end to end.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - uses: oven-sh/setup-bun@v2
+      - run: npm install
+      - run: npm run build
+      - run: node dist/cli.js init --full --app=.tmp-app
+      - run: npm install hono-svelte@file:../.. --no-fund --no-audit
+        working-directory: .tmp-app
+      - run: npm run typecheck
+        working-directory: .tmp-app
+      - run: bun run build
+        working-directory: .tmp-app
+
   example:
     runs-on: ubuntu-latest
     strategy:

@@ -114,6 +114,7 @@ describe("scaffold", () => {
     expect(paths).toContain("package.json");
     expect(paths).toContain("tsconfig.json");
     expect(paths).toContain("src/env.d.ts");
+    expect(paths).toContain("src/hono-svelte-entries.d.ts");
     expect(paths).toContain("vite.config.ts");
     expect(paths).toContain("src/pages/index.svelte");
     expect(paths).toContain("src/pages/hello.svelte");
@@ -156,6 +157,22 @@ describe("scaffold", () => {
     expect(isSafeAppPath("C:\\proj", "C:\\other\\evil.ts")).toBe(false);
     expect(isSafeAppPath("/app", "/etc/passwd")).toBe(false);
     expect(isSafeAppPath("/app", "/app/../evil.ts")).toBe(false);
+  });
+
+  it("generated package.json carries the security floors (no vulnerable ranges)", () => {
+    const files = initFiles();
+    const pkg = JSON.parse(
+      files.find((f) => f.path === "package.json")?.content ?? "{}",
+    ) as {
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+    // All published advisories sit below these floors (hono < 4.12.34,
+    // svelte <= 5.55.6, vite <= 8.0.15) — keep them in sync with the
+    // package's own peerDependencies.
+    expect(pkg.dependencies.hono).toBe("^4.13.8");
+    expect(pkg.dependencies.svelte).toBe("^5.57.0");
+    expect(pkg.devDependencies.vite).toBe("^8.3.0");
   });
 
   it("init --full scaffolds a runnable app (smoke: tsc on generated files)", () => {
