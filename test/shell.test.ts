@@ -263,6 +263,35 @@ describe("shell", () => {
     expect(html).toContain('rel="modulepreload" href="/static/chunks/runtime-3.js"');
   });
 
+  describe("global stylesheet", () => {
+    const linkOf = async (opts: Parameters<typeof shell>[0]) => {
+      const app = new Hono();
+      app.use("/*", shell(opts));
+      app.get("/", (c) => c.render("admin"));
+      const html = await (await app.request("/")).text();
+      return html.match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+    };
+    const manifest = {
+      "src/styles.css": { file: "static/styles-H4SH.css", src: "src/styles.css", isEntry: true },
+      "src/app.css": { file: "static/app-0TH3R.css", src: "src/app.css", isEntry: true },
+    };
+
+    it("resolves the hashed file from the manifest in prod", async () => {
+      expect(await linkOf({ assets: manifest, isProd: true })).toBe("/static/styles-H4SH.css");
+    });
+
+    it("stylesEntry picks another source file, in prod and in dev", async () => {
+      expect(await linkOf({ assets: manifest, isProd: true, stylesEntry: "src/app.css" })).toBe("/static/app-0TH3R.css");
+      expect(await linkOf({ isProd: false, stylesEntry: "/src/app.css" })).toBe("/src/app.css");
+    });
+
+    it("keeps the legacy defaults without a manifest entry, and stylesHref wins", async () => {
+      expect(await linkOf({ isProd: true })).toBe("/static/styles.css");
+      expect(await linkOf({ isProd: false })).toBe("/src/styles.css");
+      expect(await linkOf({ assets: manifest, isProd: true, stylesHref: "/custom.css" })).toBe("/custom.css");
+    });
+  });
+
   it("prefetch all emits modulepreload links for other entries", async () => {
     const app = new Hono();
     app.use("/*", shell({ knownEntries: ["a", "b"], prefetch: "all", isProd: true } as never));
