@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **feat: `getPage()` from `hono-svelte/page`.** Layouts had no way to
+  know which route rendered them (active-link logic needed the route
+  threaded through every page's `data`). `getPage()` returns `{ path,
+  route }` (request pathname + Hono route pattern, e.g. `/users/:id`) in
+  server-rendered components and client pages alike: the shell provides it
+  as Svelte context on SSR and writes `data-hs-path`/`data-hs-route` on the
+  root element, which the generated client entry passes as `context` to
+  `mount`/`hydrate`. New `./page` export; `PageInfo` type exported from the
+  main entry.
+
 - **feat(shell): global stylesheet resolved from the manifest
   (`stylesEntry`).** With `assets: manifest`, the global CSS kept pointing at
   the unhashed `/static/styles.css`, so hashed client builds needed a
