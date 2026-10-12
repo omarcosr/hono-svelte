@@ -236,7 +236,8 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 | `assetsBase` | `"/static"` | Prefix for JS files in production (legacy; prefer `assets`) |
 | `assets` | `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url` (hashed files) |
 | `isProd` | auto | Force prod/dev asset behavior |
-| `stylesHref` | `"/static/styles.css"` in prod, `"/src/styles.css"` in dev | Global stylesheet (or an `(isProd) => string` function) |
+| `stylesHref` | from `stylesEntry` | Global stylesheet href (or an `(isProd) => string` function); overrides `stylesEntry` |
+| `stylesEntry` | `"src/styles.css"` | Source of the global stylesheet: dev links `/<stylesEntry>`, prod resolves the hashed file from the manifest in `assets` (fallback `/static/styles.css`) |
 | `styles` | `[]` | Extra CSS hrefs emitted per response |
 | `head` | `""` | Extra HTML in `<head>` (fonts, meta tags) |
 | `nonce` | — | CSP nonce string or `(c) => string` (applied to shell `<script>`/`<link>`) |
@@ -385,7 +386,7 @@ extracted declarations.
 
 ## Production tips
 
-- Pass the Vite manifest to `shell({ assets: manifest })` for hashed files. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
+- Pass the Vite manifest to `shell({ assets: manifest })` for hashed files — including the global stylesheet: with `styles: resolve("src/styles.css")` in the client input (or `stylesEntry` pointing at another file), its hashed name comes from the manifest, no hand-written `stylesHref`. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
 - Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
 - The shell emits a neutral `<body>` (no framework classes) — style `body`/`html` from your global stylesheet (`stylesHref`), e.g. `body { @apply bg-base-200 min-h-screen text-base-content; }` with Tailwind/DaisyUI.
