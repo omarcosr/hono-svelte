@@ -3,4 +3,5 @@ dist
 coverage
 examples/playground/node_modules
 examples/playground/dist
-test/.types-* 
+test/.types-*
+.empryo
