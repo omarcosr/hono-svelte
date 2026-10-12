@@ -10,6 +10,14 @@
   layout's styles. Both now walk the static `imports` graph (shared chunks
   first, cycles handled, `dynamicImports` skipped). `ViteManifestChunk`
   gains the optional `src`, `name` and `dynamicImports` fields.
+- **fix(vite): static pages and layouts keep their `<style>` after `vite
+  build`.** Server-rendered components have no client bundle, but with
+  vite-plugin-svelte's default `emitCss: true` the compiler emits their CSS
+  as an import that SSR drops — zero-JS pages shipped unstyled. `pages()`
+  now loads static pages and layouts for the server with
+  `css: "injected"` (merged into an existing `<svelte:options>`, explicit
+  `css` respected), so `render()` returns the styles in `head`. New
+  `test/build.test.ts` exercises the real `vite build --ssr` pipeline.
 
 ## 0.5.1
 
