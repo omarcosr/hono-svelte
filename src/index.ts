@@ -9,6 +9,7 @@ import {
 } from "./assets.js";
 import { renderHead, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
+import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
 import {
   allEntries as autoAllEntries,
   ssrLayouts as autoSsrLayouts,
@@ -36,6 +37,7 @@ export type { ErrorPageOptions, ServerErrorHandlerOptions } from "./handlers.js"
 export { renderHead } from "./head.js";
 export type { HeadMetaItem, HeadProps } from "./head.js";
 export { getIds } from "./ids.js";
+export type { PageInfo } from "./page.js";
 export type { SharedIds } from "./ids.js";
 export { checkAppLink, doctorChecks, initFiles, isSafeAppPath, isValidPageName, newPageFile } from "./scaffold.js";
 export type { DoctorIssue, DoctorOptions, InitFile, InitFlavor } from "./scaffold.js";
@@ -450,12 +452,14 @@ export function shell(options: ShellOptions = {}) {
     pageData: Record<string, unknown> | undefined,
     nonce: string | undefined,
     layoutChain: SsrPageLoader[],
+    page: PageInfo,
   ): Promise<{ html: string; head: string }> {
     const mod = await loader();
     const { render } = await import("svelte/server");
     const renderOpts: Record<string, unknown> = {};
     if (pageData !== undefined) renderOpts.props = pageData;
     if (nonce) renderOpts.csp = { nonce };
+    renderOpts.context = pageContext(page);
     const rendered = render(mod.default as Component, renderOpts) as {
       html?: string;
       body?: string;
@@ -478,6 +482,7 @@ export function shell(options: ShellOptions = {}) {
           ...(pageData !== undefined ? { props: pageData } : {}),
           props: { ...pageData, children: childSnippet },
           ...(nonce ? { csp: { nonce } } : {}),
+          context: pageContext(page),
         }) as { html?: string; body?: string; head?: string | (() => string) };
         html = wrapped.html ?? wrapped.body ?? "";
         const layoutHead =
@@ -535,6 +540,7 @@ export function shell(options: ShellOptions = {}) {
         }
       }
       const ids = getIds(entryName);
+      const page: PageInfo = { path: c.req.path, route: c.req.routePath ?? c.req.path };
       const isProd = options.isProd ?? detectProd();
       const nonce = resolveNonce(c);
       const nAttr = nonceAttr(nonce);
@@ -547,7 +553,7 @@ export function shell(options: ShellOptions = {}) {
       let ssrHead = "";
       if (isSsr) {
         try {
-          const rendered = await renderSsrBody(loader as SsrPageLoader, props?.data, nonce, chain);
+          const rendered = await renderSsrBody(loader as SsrPageLoader, props?.data, nonce, chain, page);
           bodyHtml = rendered.html;
           ssrHead = rendered.head;
         } catch (err) {
@@ -634,7 +640,7 @@ export function shell(options: ShellOptions = {}) {
           prefetchHtml +
           scriptHtml +
           `</head>` +
-          `<body><div id="${ids.rootId}">${bodyHtml}</div>` +
+          `<body><div id="${ids.rootId}" ${PAGE_ATTRIBUTES.path}="${escapeAttr(page.path)}" ${PAGE_ATTRIBUTES.route}="${escapeAttr(page.route)}">${bodyHtml}</div>` +
           dataHtml +
           `</body></html>`,
         status,

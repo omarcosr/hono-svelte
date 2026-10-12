@@ -5,6 +5,7 @@ import { getIds } from "../src/ids.js";
 import Home from "./fixtures/pages/home.svelte";
 import PropsPage from "./fixtures/_pages/props.svelte";
 import HeadPage from "./fixtures/_pages/head.svelte";
+import PageInfoPage from "./fixtures/_pages/page-info.svelte";
 
 const staticLoader = async () => ({ default: Home });
 const propsLoader = async () => ({ default: PropsPage });
@@ -111,6 +112,33 @@ describe("shell", () => {
       const html = await (await headApp().request("/props-head")).text();
       expect(count(html, /name="description"/g)).toBe(1);
       expect(html).toContain('content="Props description"');
+    });
+  });
+
+  describe("page context (getPage)", () => {
+    const infoLoader = async () => ({ default: PageInfoPage });
+
+    it("server-rendered components read the request path and the Hono route", async () => {
+      const users = new Hono().get("/users/:id", (c) => c.render("info"));
+      const app = new Hono();
+      app.use("/*", shell({ ssrPages: { info: infoLoader } }));
+      app.route("/admin", users);
+      const html = await (await app.request("/admin/users/7")).text();
+      expect(html).toContain('data-path="/admin/users/7" data-route="/admin/users/:id"');
+    });
+
+    it("the root element carries the page info for the client entry", async () => {
+      const app = new Hono();
+      app.use("/*", shell({}));
+      app.get("/items/:id", (c) => c.render("admin"));
+      const html = await (await app.request("/items/%22x%22")).text();
+      expect(html).toContain(`id="${getIds("admin").rootId}" data-hs-path="/items/&quot;x&quot;" data-hs-route="/items/:id"`);
+    });
+
+    it("getPage() outside a shell render fails with a clear error", async () => {
+      const { render } = await import("svelte/server");
+      // render() is lazy: reading `body` runs the component.
+      expect(() => render(PageInfoPage).body).toThrow(/getPage\(\) must be called inside a page or layout/);
     });
   });
 
