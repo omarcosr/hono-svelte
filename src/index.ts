@@ -147,6 +147,38 @@ function isValidEntryName(entryName: string): boolean {
   );
 }
 
+const TITLE_TAG = /<title\b[^>]*>[\s\S]*?<\/title>/gi;
+const DESCRIPTION_META = /<meta\b(?=[^>]*\bname=["']description["'])[^>]*>/gi;
+
+/**
+ * One `<title>` / `<meta name="description">` per document, page first.
+ * Browsers use the FIRST `<title>`, so the shell default used to beat the
+ * page's `<svelte:head>`. Precedence: `c.render(entry, { title })` > the
+ * page/layout `<svelte:head>` > `shell({ title })`; for the description,
+ * the page (`<svelte:head>` or `props.head`) > `shell({ head })`.
+ */
+function resolveHeadConflicts(input: {
+  shellTitle: string;
+  explicitTitle: string | undefined;
+  shellHead: string;
+  ssrHead: string;
+  pageHead: string;
+}): { title: string; shellHead: string; ssrHead: string } {
+  let { shellHead, ssrHead } = input;
+  const pageHasTitle = new RegExp(TITLE_TAG.source, "i").test(ssrHead);
+  let title = "";
+  if (input.explicitTitle !== undefined) {
+    title = `<title>${escapeAttr(input.explicitTitle)}</title>`;
+    ssrHead = ssrHead.replace(TITLE_TAG, "");
+  } else if (!pageHasTitle) {
+    title = `<title>${escapeAttr(input.shellTitle)}</title>`;
+  }
+  if (new RegExp(DESCRIPTION_META.source, "i").test(ssrHead + input.pageHead)) {
+    shellHead = shellHead.replace(DESCRIPTION_META, "");
+  }
+  return { title, shellHead, ssrHead };
+}
+
 function nonceAttr(nonce: string | undefined): string {
   return nonce ? ` nonce="${escapeAttr(nonce)}"` : "";
 }
@@ -469,7 +501,6 @@ export function shell(options: ShellOptions = {}) {
         }
       }
       const ids = getIds(entryName);
-      const title = props?.title ?? titleDefault;
       const isProd = options.isProd ?? detectProd();
       const nonce = resolveNonce(c);
       const nAttr = nonceAttr(nonce);
@@ -549,13 +580,21 @@ export function shell(options: ShellOptions = {}) {
           .map((href) => lt + `link rel="stylesheet" href="${escapeAttr(href)}"${nAttr} />`)
           .join("");
 
+      const resolvedHead = resolveHeadConflicts({
+        shellTitle: titleDefault,
+        explicitTitle: props?.title,
+        shellHead: head,
+        ssrHead,
+        pageHead,
+      });
+
       return c.html(
-        `<!doctype html><html lang="${escapeAttr(lang)}"><head><title>${escapeAttr(title)}</title>` +
+        `<!doctype html><html lang="${escapeAttr(lang)}"><head>${resolvedHead.title}` +
           `<meta charset="utf-8" /><meta content="width=device-width, initial-scale=1" name="viewport" />` +
-          (head ? head : "") +
+          resolvedHead.shellHead +
           `<link rel="stylesheet" href="${escapeAttr(stylesHref)}"${nAttr} />` +
           cssLinks +
-          ssrHead +
+          resolvedHead.ssrHead +
           pageHead +
           preloadHtml +
           prefetchHtml +
