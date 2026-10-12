@@ -306,11 +306,25 @@ const appPages = pages({ dts: true }); // writes src/hono-svelte-entries.d.ts
 // generated src/hono-svelte-entries.d.ts (commit it — CI needs no Vite run)
 export type HonoSvelteEntries = "auth" | "dashboard/index" | "index";
 
+declare module "hono-svelte" {
+  interface Register {
+    entries: HonoSvelteEntries;
+  }
+}
+
 declare module "hono" {
   interface ContextRenderer {
     (entryName: HonoSvelteEntries, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
   }
 }
+```
+
+Helpers that forward an entry to `c.render` use the `Entry` type exported by the package — the generated union once the `.d.ts` is in the program, `string` without it. No import of the generated file needed:
+
+```ts
+import type { Entry } from "hono-svelte";
+
+export const page = (entry: Entry, title: string) => (c: Context) => c.render(entry, { title });
 ```
 
 `dts: "path/to/entries.d.ts"` sets a custom path (relative to the Vite root). The file regenerates on `buildStart` and via the dev watcher when entries change. Without `dts` (default `false`), declare the renderer manually with a plain `string`:
