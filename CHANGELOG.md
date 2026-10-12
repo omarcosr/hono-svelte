@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.1
+
+- **fix(shell): nested layouts nest outermost first.** With a root
+  `layout.svelte` plus `<dir>/layout.svelte`, the server wrapped the page in
+  the root layout first, so the directory layout ended up outside.
+- **fix(vite): client pages mount the whole layout chain.** The client entry
+  imported every layout but only mounted `Layout0`; inner layouts vanished.
+  Client entries are never server-rendered, so the chain is now mounted
+  (no hydration of an empty root).
+- **fix(vite): components imported by static pages and layouts keep their
+  `<style>`.** Only the page/layout files were compiled with
+  `css: "injected"` for the server; a layout's nav or a component-library
+  component lost its CSS on zero-JS pages.
+- **fix(handlers): `errorHandler` keeps the headers of `HTTPException`
+  responses** — `basicAuth`/`bearerAuth` 401s now carry `WWW-Authenticate`.
+- **fix(shell): prefetch.** `prefetch: "all"` no longer preloads static pages
+  (no JS chunk → 404); `"hover"` dedupes its links (it looked for
+  `rel="prefetch"` but created `modulepreload`) and maps `/` → `index` and
+  `/dir` → `dir/index`.
+- **fix(shell):** the global stylesheet fallback follows `assetsBase`; a
+  throwing `nonce()` is logged instead of silently dropping the CSP nonce.
+- **fix(vite):** `pagesDir` outside the Vite root (including another drive
+  on Windows) fails with a clear English error.
+- **test:** `test/regressions.test.ts` (one test per fix) and a Playwright
+  contract suite in `e2e/` that runs the same browser tests against
+  hono-svelte on Node, on Bun, and against SvelteKit as the reference. CI
+  adds the e2e job and a peer-dependency matrix (declared minimums and
+  latest within the majors).
+
 ## 0.6.0
 
 - **feat(shell): `htmlAttributes` option.** Only `lang` could be set on
