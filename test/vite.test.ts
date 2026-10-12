@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { getIds } from "../src/ids.js";
 import { MANIFEST_RESOLVED, MANIFEST_ID, ENTRY_PREFIX } from "../src/virtual.js";
-import { pages } from "../src/vite.js";
+import { pages, withInjectedCss } from "../src/vite.js";
 import { newPageFile } from "../src/scaffold.js";
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -300,5 +300,31 @@ describe("pages() plugin", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("SSR CSS for server-rendered components", () => {
+  const load = (plugin: ReturnType<typeof makePlugin>, file: string, ssr: boolean) =>
+    (plugin.load as (id: string, options?: { ssr?: boolean }) => unknown).call({}, resolve(pkgRoot, file), { ssr });
+
+  it("static pages are compiled with css=injected on the server only", () => {
+    const plugin = makePlugin();
+    expect(load(plugin, "test/fixtures/pages/home.svelte", true)).toContain('<svelte:options css="injected" />');
+    expect(load(plugin, "test/fixtures/pages/home.svelte", false)).toBeNull();
+  });
+
+  it("client pages keep the default (external CSS, linked from the client build)", () => {
+    expect(load(makePlugin(), "test/fixtures/pages/admin.svelte", true)).toBeNull();
+  });
+
+  it("merges into an existing <svelte:options> and respects an explicit css option", () => {
+    expect(withInjectedCss('<svelte:options namespace="html" />\n<p>x</p>')).toBe(
+      '<svelte:options namespace="html" css="injected" />\n<p>x</p>',
+    );
+    expect(withInjectedCss("<svelte:options runes></svelte:options><p>x</p>")).toBe(
+      '<svelte:options runes css="injected"></svelte:options><p>x</p>',
+    );
+    const explicit = '<svelte:options css="external" /><p>x</p>';
+    expect(withInjectedCss(explicit)).toBe(explicit);
   });
 });
