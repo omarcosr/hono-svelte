@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **feat(handlers): error pages get `{ status, message }`; JSON for API
+  paths.** `notFoundHandler`/`errorHandler` rendered the page without any
+  data, always with 404/500, and had no way to keep API routes on JSON.
+  Now: pages receive `{ status, message }` (merged under `opts.data`);
+  `errorHandler` uses the status carried by the error (`HTTPException`
+  and friends), exposes the error message only for 4xx (`expose` to
+  customize, `message` for the generic text) and logs only 5xx; new
+  `json: (c) => boolean` answers `{ message }` JSON with the same status.
+  `notFoundHandler` takes a `message`. `ErrorPageData` type exported.
+
 - **feat: `getPage()` from `hono-svelte/page`.** Layouts had no way to
   know which route rendered them (active-link logic needed the route
   threaded through every page's `data`). `getPage()` returns `{ path,
