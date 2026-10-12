@@ -105,7 +105,9 @@ describe("pages() plugin", () => {
       writeFileSync(join(dir, "nested", "layout.svelte"), "<div><slot /></div>\n");
       writeFileSync(join(dir, "nested", "page.svelte"), "<script>let x = 1;</script><p>{x}</p>\n");
       const plugin = pages({ pagesDir: dir });
-      plugin.configResolved({ root: pkgRoot } as never);
+      // The temp dir is the Vite root: pagesDir must live inside it (on
+      // Windows a tmpdir on another drive used to slip past the check).
+      plugin.configResolved({ root: dir } as never);
       plugin.buildStart();
       expect(plugin.entries()).toEqual(["nested/page"]);
       expect(plugin.layouts()).toEqual(["nested/layout"]);

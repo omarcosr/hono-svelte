@@ -55,6 +55,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      # The example's build script chains `bun run build:client && bun run build:server`.
+      - uses: oven-sh/setup-bun@v2
       - name: Build package (dist exigido pelo exemplo)
         run: npm install && npm run build
       - name: Install example
