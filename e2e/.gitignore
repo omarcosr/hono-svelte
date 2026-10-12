@@ -1,0 +1,6 @@
+node_modules
+hono-app/dist
+kit-app/build
+kit-app/.svelte-kit
+test-results
+playwright-report
