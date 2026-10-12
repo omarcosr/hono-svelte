@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 - **feat(shell): `htmlAttributes` option.** Only `lang` could be set on
   `<html>`, so themes driven by a root attribute (DaisyUI `data-theme`,
