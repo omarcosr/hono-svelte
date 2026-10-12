@@ -68,6 +68,45 @@ describe("assets", () => {
     expect(manifestCssFor(manifest, "missing")).toEqual([]);
   });
 
+  // Vite puts a shared module's CSS on the chunk that owns it: a layout used
+  // by several pages lands in `_layout.js` with `layout.css`, not on the entry.
+  const graph = {
+    "virtual:hono-svelte/entry/dash/page": {
+      file: "static/dash/page.js",
+      isEntry: true,
+      imports: ["_layout.js", "_icon.js"],
+      css: ["static/page.css"],
+    },
+    "_layout.js": { file: "static/chunks/layout.js", imports: ["_runtime.js", "_modal.js"], css: ["static/layout.css"] },
+    "_modal.js": { file: "static/chunks/modal.js", imports: ["_runtime.js"], css: ["static/modal.css"] },
+    "_icon.js": { file: "static/chunks/icon.js", imports: ["_runtime.js"], dynamicImports: ["_lazy.js"] },
+    "_runtime.js": { file: "static/chunks/runtime.js" },
+    "_lazy.js": { file: "static/chunks/lazy.js", css: ["static/lazy.css"] },
+  };
+
+  it("collects CSS from the whole static import graph, shared chunks first", () => {
+    expect(manifestCssFor(graph, "dash/page")).toEqual(["/static/modal.css", "/static/layout.css", "/static/page.css"]);
+  });
+
+  it("preloads every statically reachable chunk once, skipping dynamic imports", () => {
+    expect(manifestImportsFor(graph, "dash/page")).toEqual([
+      "/static/chunks/runtime.js",
+      "/static/chunks/modal.js",
+      "/static/chunks/layout.js",
+      "/static/chunks/icon.js",
+    ]);
+  });
+
+  it("survives import cycles", () => {
+    const cyclic = {
+      entry: { file: "e.js", imports: ["_a.js"], css: ["e.css"] },
+      "_a.js": { file: "a.js", imports: ["_b.js"], css: ["a.css"] },
+      "_b.js": { file: "b.js", imports: ["_a.js"], css: ["b.css"] },
+    };
+    expect(manifestCssFor(cyclic, "entry")).toEqual(["/b.css", "/a.css", "/e.css"]);
+    expect(manifestImportsFor(cyclic, "entry")).toEqual(["/b.js", "/a.js"]);
+  });
+
   it("cache helpers use immutable", () => {
     expect(CACHE_IMMUTABLE).toContain("immutable");
     expect(immutableHeaders({ "X-A": "1" })).toEqual({

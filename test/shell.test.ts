@@ -195,6 +195,28 @@ describe("shell", () => {
     expect(html).toContain('href="/static/chunks/chunk-XYZ.js"');
   });
 
+  it("manifest assets link the CSS of shared chunks (layouts, components)", async () => {
+    const manifest = {
+      "virtual:hono-svelte/entry/dash": {
+        file: "static/dash-1.js",
+        isEntry: true,
+        css: ["static/dash-1.css"],
+        imports: ["_layout.js"],
+      },
+      "_layout.js": { file: "static/chunks/layout-2.js", css: ["static/layout-2.css"], imports: ["_runtime.js"] },
+      "_runtime.js": { file: "static/chunks/runtime-3.js" },
+    };
+    const app = new Hono();
+    app.use("/*", shell({ assets: manifest, isProd: true }));
+    app.get("/", (c) => c.render("dash"));
+    const html = await (await app.request("/")).text();
+    const layoutCss = html.indexOf('rel="stylesheet" href="/static/layout-2.css"');
+    const pageCss = html.indexOf('rel="stylesheet" href="/static/dash-1.css"');
+    expect(layoutCss).toBeGreaterThan(-1);
+    expect(pageCss).toBeGreaterThan(layoutCss);
+    expect(html).toContain('rel="modulepreload" href="/static/chunks/runtime-3.js"');
+  });
+
   it("prefetch all emits modulepreload links for other entries", async () => {
     const app = new Hono();
     app.use("/*", shell({ knownEntries: ["a", "b"], prefetch: "all", isProd: true } as never));
