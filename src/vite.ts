@@ -442,13 +442,17 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       "const target = document.getElementById(" + JSON.stringify(ids.rootId) + ");\n" +
       "const raw = document.getElementById(" + JSON.stringify(ids.dataId) + ")?.textContent;\n" +
       "const props = raw ? JSON.parse(raw) : {};\n" +
+      // Same context the shell gives server-rendered components (see src/page.ts).
+      "const context = new Map([[Symbol.for(\"hono-svelte:page\"), {" +
+      " path: target?.getAttribute(\"data-hs-path\") ?? location.pathname," +
+      " route: target?.getAttribute(\"data-hs-route\") ?? location.pathname }]]);\n" +
       entryMountSource(page) +
       "\n"
     );
   }
 
   function entryMountSource(page: PageSpec): string {
-    if (page.layouts.length === 0) return "if (target) mount(Page, { target, props });";
+    if (page.layouts.length === 0) return "if (target) mount(Page, { target, props, context });";
     // NOTE: createRawSnippet's snippet MUST render one wrapper element
     // (client impl takes get_first_child(fragment) and calls setup(element)).
     // An empty render ("") yields a null element -> "Cannot set properties
@@ -458,9 +462,9 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       "if (target) {",
       "  const __kids = createRawSnippet(() => ({",
       "    render: () => \"<div></div>\",",
-      "    setup: (el) => { hydrate(Page, { target: el, props }); },",
+      "    setup: (el) => { hydrate(Page, { target: el, props, context }); },",
       "  }));",
-      "  hydrate(Layout0, { target, props: { ...props, children: __kids } });",
+      "  hydrate(Layout0, { target, props: { ...props, children: __kids }, context });",
       "}",
     ].join("\n");
   }
