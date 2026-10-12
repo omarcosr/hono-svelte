@@ -302,6 +302,14 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
             "",
           ]
         : []),
+      // Registers the union on the package itself so apps can write
+      // `import type { Entry } from "hono-svelte"` instead of importing this file.
+      `declare module "hono-svelte" {`,
+      `  interface Register {`,
+      `    entries: ${typeName};`,
+      `  }`,
+      `}`,
+      "",
       `declare module "hono" {`,
       `  interface ContextRenderer {`,
       // Typed overloads come first, then the union catch-all: overload

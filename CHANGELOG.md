@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **feat(types): `Entry` type exported from `hono-svelte`.** The generated
+  `.d.ts` now also augments the package (`interface Register { entries }`),
+  so helpers that forward an entry to `c.render` can be typed with
+  `import type { Entry } from "hono-svelte"` instead of importing the
+  generated file by relative path. Without the `.d.ts`, `Entry` is
+  `string`. A new `test/types.test.ts` runs `tsc` against the generated
+  declarations.
+
 - **fix(shell): the page's `<svelte:head>` title and description win.**
   The shell always emitted its default `<title>` first and browsers use the
   first one, so a static page's `<svelte:head><title>` was ignored (and
