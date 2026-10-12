@@ -150,7 +150,7 @@ app.get("/post", (c) =>
 );
 ```
 
-`<svelte:head>` inside pages also works (shell forwards SSR `head`). Page `head` never emits executable inline scripts (CSP-safe; `extra` is for trusted raw HTML like fonts or JSON-LD).
+`<svelte:head>` inside pages also works (shell forwards SSR `head`). The document keeps a single `<title>` and `<meta name="description">`: `c.render(entry, { title })` > the page/layout `<svelte:head>` > `shell({ title })`, and a page description (`<svelte:head>` or `head.description`) replaces one set in `shell({ head })`. Page `head` never emits executable inline scripts (CSP-safe; `extra` is for trusted raw HTML like fonts or JSON-LD).
 
 ## Nested layouts
 
@@ -231,7 +231,7 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 
 | Option | Default | Description |
 |---|---|---|
-| `title` | `"App"` | Title used when the route doesn't provide one |
+| `title` | `"App"` | Title used when neither `c.render(entry, { title })` nor the page's `<svelte:head>` provides one |
 | `lang` | `"en"` | `<html>` `lang` attribute |
 | `assetsBase` | `"/static"` | Prefix for JS files in production (legacy; prefer `assets`) |
 | `assets` | `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url` (hashed files) |

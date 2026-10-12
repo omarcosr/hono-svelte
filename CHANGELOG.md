@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **fix(shell): the page's `<svelte:head>` title and description win.**
+  The shell always emitted its default `<title>` first and browsers use the
+  first one, so a static page's `<svelte:head><title>` was ignored (and
+  `shell({ head })` descriptions were duplicated). The document now keeps a
+  single title — `c.render(entry, { title })` > page/layout `<svelte:head>`
+  > `shell({ title })` — and a page description (`<svelte:head>` or
+  `head.description`) removes the one from `shell({ head })`.
+
 - **fix(assets): CSS of shared chunks is linked in production.** Vite
   attaches a module's CSS to the chunk that owns it, so a layout or
   component shared by several pages gets its own chunk + CSS file.
