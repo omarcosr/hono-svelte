@@ -68,4 +68,9 @@ describe("vite build (ssr)", () => {
     expect(page).toMatch(/<style[^>]*>[^<]*goldenrod/);
     expect(page).toMatch(/<style[^>]*>[^<]*seagreen/);
   });
+
+  it("layouts read the page info through getPage()", async () => {
+    expect(await html("/docs")).toContain('<nav class="docs-nav');
+    expect(await html("/docs")).toMatch(/<nav class="docs-nav[^"]*" data-route="\/docs">/);
+  });
 });

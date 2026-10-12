@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { getPage } from "hono-svelte/page";
 
   type Props = {
     title?: string;
@@ -8,6 +9,14 @@
   };
 
   let { title = "Dashboard", description = "", children }: Props = $props();
+
+  // Active link from the Hono route that rendered the page.
+  const page = getPage();
+  const links = [
+    { href: "/dashboard", label: "Overview" },
+    { href: "/dashboard/page1", label: "Page 1" },
+    { href: "/dashboard/purchase", label: "Purchase" },
+  ];
 </script>
 
 <main class="bg-base-200 px-4 sm:px-6 py-8 lg:py-12 min-h-dvh">
@@ -25,9 +34,12 @@
 
       <div class="flex flex-wrap items-center gap-2">
         <nav aria-label="Dashboard navigation" class="flex flex-wrap gap-2">
-          <a class="btn btn-ghost btn-sm" href="/dashboard">Overview</a>
-          <a class="btn btn-ghost btn-sm" href="/dashboard/page1">Page 1</a>
-          <a class="btn btn-ghost btn-sm" href="/dashboard/purchase">Purchase</a>
+          {#each links as link (link.href)}
+            <a
+              class="btn btn-sm {page.route === link.href ? 'btn-active' : 'btn-ghost'}"
+              href={link.href}
+              aria-current={page.route === link.href ? "page" : undefined}>{link.label}</a>
+          {/each}
         </nav>
         <form action="/auth/logout" method="post">
           <button class="btn btn-sm" type="submit">Sign out</button>
