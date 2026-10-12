@@ -369,7 +369,7 @@ extracted declarations.
 
 ## Production tips
 
-- Pass the Vite manifest to `shell({ assets: manifest })` for hashed files; manifest CSS and shared chunks are emitted automatically (`modulepreload`).
+- Pass the Vite manifest to `shell({ assets: manifest })` for hashed files. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
 - Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
 - The shell emits a neutral `<body>` (no framework classes) — style `body`/`html` from your global stylesheet (`stylesHref`), e.g. `body { @apply bg-base-200 min-h-screen text-base-content; }` with Tailwind/DaisyUI.

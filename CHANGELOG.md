@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **fix(assets): CSS of shared chunks is linked in production.** Vite
+  attaches a module's CSS to the chunk that owns it, so a layout or
+  component shared by several pages gets its own chunk + CSS file.
+  `manifestCssFor`/`manifestImportsFor` (and therefore `shell({ assets:
+  manifest })`) only read the entry chunk: pages rendered without their
+  layout's styles. Both now walk the static `imports` graph (shared chunks
+  first, cycles handled, `dynamicImports` skipped). `ViteManifestChunk`
+  gains the optional `src`, `name` and `dynamicImports` fields.
+
 ## 0.5.1
 
 - **Scaffold hardening** (`hono-svelte init`):
