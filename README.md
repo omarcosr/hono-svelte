@@ -216,6 +216,25 @@ app.notFound(notFoundHandler()); // renders `404.svelte` with status 404
 app.onError(errorHandler()); // renders `500.svelte` with status 500
 ```
 
+Both pages receive `{ status, message }` as props (merged under `data`). `errorHandler` takes the status from errors that carry one (hono's `HTTPException(410, { message })` → 410) and only exposes the error's own message for 4xx — 5xx get `message` (default `"Internal Server Error"`) and are the only ones logged. `json` answers `{ message }` JSON instead of the page, e.g. for API routes:
+
+```ts
+const isApi = (c: Context) => c.req.path.startsWith("/api/");
+
+app.notFound(notFoundHandler({ json: isApi, message: "Page not found" }));
+app.onError(errorHandler({ json: isApi, expose: (err, status) => status < 500 }));
+```
+
+```svelte
+<!-- src/pages/500.svelte -->
+<script lang="ts">
+  let { status, message }: { status: number; message: string } = $props();
+</script>
+
+<h1>{status}</h1>
+<p>{message}</p>
+```
+
 ## CLI
 
 ```sh
