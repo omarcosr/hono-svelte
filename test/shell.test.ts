@@ -142,6 +142,41 @@ describe("shell", () => {
     });
   });
 
+  describe("htmlAttributes", () => {
+    const htmlTag = async (opts: Parameters<typeof shell>[0], cookie?: string) => {
+      const app = new Hono();
+      app.use("/*", shell(opts));
+      app.get("/", (c) => c.render("admin"));
+      const html = await (await app.request("/", cookie ? { headers: { cookie } } : undefined)).text();
+      return html.match(/<html[^>]*>/)?.[0];
+    };
+
+    it("adds escaped attributes after lang", async () => {
+      expect(await htmlTag({ lang: "pt-BR", htmlAttributes: { "data-theme": 'dark" onload="x', class: "h-full" } })).toBe(
+        '<html lang="pt-BR" data-theme="dark&quot; onload=&quot;x" class="h-full">',
+      );
+    });
+
+    it("a function computes them per request", async () => {
+      const opts = {
+        htmlAttributes: (c: unknown) => ({ "data-theme": (c as { req: { header: (n: string) => string | undefined } }).req.header("cookie")?.includes("theme=light") ? "light" : "dark" }),
+      };
+      expect(await htmlTag(opts)).toBe('<html lang="en" data-theme="dark">');
+      expect(await htmlTag(opts, "theme=light")).toBe('<html lang="en" data-theme="light">');
+    });
+
+    it("rejects invalid names and lang", async () => {
+      const status = async (htmlAttributes: Record<string, string>) => {
+        const app = new Hono();
+        app.use("/*", shell({ htmlAttributes }));
+        app.get("/", (c) => c.render("admin"));
+        return (await app.request("/")).status;
+      };
+      expect(await status({ 'x"><script>': "1" })).toBe(500);
+      expect(await status({ lang: "fr" })).toBe(500);
+    });
+  });
+
   it("status and headers are respected", async () => {
     const app = new Hono();
     app.use("/*", shell({}));
