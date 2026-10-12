@@ -74,6 +74,11 @@ describe("pages() plugin", () => {
     expect(decl).toContain('"admin" | "home"');
   });
 
+  it("typeDeclarations() registers the entry union on the package (Entry type)", () => {
+    const decl = makePlugin().typeDeclarations();
+    expect(decl).toContain('declare module "hono-svelte" {\n  interface Register {\n    entries: HonoSvelteEntries;');
+  });
+
   it("virtual manifest lists all entries", () => {
     const manifest = makePlugin().load(MANIFEST_RESOLVED) as string;
     expect(manifest).toContain('allEntries = ["admin","home"]');
