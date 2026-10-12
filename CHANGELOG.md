@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **feat(shell): `htmlAttributes` option.** Only `lang` could be set on
+  `<html>`, so themes driven by a root attribute (DaisyUI `data-theme`,
+  `class="dark"`) needed CSS workarounds. `htmlAttributes` takes a record
+  or `(c) => record` (per-request, e.g. from a cookie); values are escaped,
+  invalid names (and `lang`, which has its own option) throw.
+
 - **feat(handlers): error pages get `{ status, message }`; JSON for API
   paths.** `notFoundHandler`/`errorHandler` rendered the page without any
   data, always with 404/500, and had no way to keep API routes on JSON.
