@@ -102,6 +102,15 @@ export type ShellOptions = {
   /** Extra CSS links per HTML response. Strings are hrefs verbatim. */
   styles?: string[];
   stylesHref?: string | ((isProd: boolean) => string);
+  /**
+   * Source path of the global stylesheet, relative to the Vite root — the
+   * same file passed to the client build input. Dev links `/<stylesEntry>`
+   * (served by Vite); prod resolves the hashed file from the manifest given
+   * in `assets`, falling back to `/static/styles.css`. `stylesHref` wins
+   * when set.
+   * @default "src/styles.css"
+   */
+  stylesEntry?: string;
   /** Global head HTML (fonts, meta) — page `head` prop is appended after it. */
   head?: string;
   /**
@@ -370,6 +379,12 @@ export function shell(options: ShellOptions = {}) {
     typeof options.stylesHref === "function"
       ? options.stylesHref
       : () => options.stylesHref as string | undefined;
+  const stylesEntry = (options.stylesEntry ?? "src/styles.css").replace(/^\/+/, "");
+  function defaultStylesHref(isProd: boolean): string {
+    if (!isProd) return "/" + stylesEntry;
+    const file = manifestFor(assetsOpt)?.[stylesEntry]?.file;
+    return file ? "/" + file.replace(/^\/+/, "") : "/static/styles.css";
+  }
   // Zero config: with pages() active, this module is redirected to the
   // in-memory manifest by the plugin's resolveId (enforce: "pre").
   const ssrPages = options.ssrPages ?? autoSsrPages;
@@ -524,7 +539,7 @@ export function shell(options: ShellOptions = {}) {
       const nonce = resolveNonce(c);
       const nAttr = nonceAttr(nonce);
       const stylesHref =
-        resolveStyles(isProd) ?? (isProd ? "/static/styles.css" : "/src/styles.css");
+        resolveStyles(isProd) ?? defaultStylesHref(isProd);
       const { html: dataHtml } = serializePageData(entryName, props?.data, ids.dataId, dataLimit);
       const lt = String.fromCharCode(60);
 
