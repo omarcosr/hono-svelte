@@ -56,6 +56,12 @@ describe("vite build (ssr)", () => {
     expect(page).toMatch(/<style[^>]*>[^<]*rebeccapurple/);
   });
 
+  it("static page <svelte:head> title is the only <title>", async () => {
+    const page = await html("/landing");
+    expect(page.match(/<title>/g)).toHaveLength(1);
+    expect(page).toContain("<title>Landing title</title>");
+  });
+
   it("layout-wrapped static page keeps the page and the layout <style>", async () => {
     const page = await html("/docs");
     expect(page).toContain("Static docs page");
