@@ -2,6 +2,74 @@
 
 ## Unreleased
 
+- **feat(shell): `htmlAttributes` option.** Only `lang` could be set on
+  `<html>`, so themes driven by a root attribute (DaisyUI `data-theme`,
+  `class="dark"`) needed CSS workarounds. `htmlAttributes` takes a record
+  or `(c) => record` (per-request, e.g. from a cookie); values are escaped,
+  invalid names (and `lang`, which has its own option) throw.
+
+- **feat(handlers): error pages get `{ status, message }`; JSON for API
+  paths.** `notFoundHandler`/`errorHandler` rendered the page without any
+  data, always with 404/500, and had no way to keep API routes on JSON.
+  Now: pages receive `{ status, message }` (merged under `opts.data`);
+  `errorHandler` uses the status carried by the error (`HTTPException`
+  and friends), exposes the error message only for 4xx (`expose` to
+  customize, `message` for the generic text) and logs only 5xx; new
+  `json: (c) => boolean` answers `{ message }` JSON with the same status.
+  `notFoundHandler` takes a `message`. `ErrorPageData` type exported.
+
+- **feat: `getPage()` from `hono-svelte/page`.** Layouts had no way to
+  know which route rendered them (active-link logic needed the route
+  threaded through every page's `data`). `getPage()` returns `{ path,
+  route }` (request pathname + Hono route pattern, e.g. `/users/:id`) in
+  server-rendered components and client pages alike: the shell provides it
+  as Svelte context on SSR and writes `data-hs-path`/`data-hs-route` on the
+  root element, which the generated client entry passes as `context` to
+  `mount`/`hydrate`. New `./page` export; `PageInfo` type exported from the
+  main entry.
+
+- **feat(shell): global stylesheet resolved from the manifest
+  (`stylesEntry`).** With `assets: manifest`, the global CSS kept pointing at
+  the unhashed `/static/styles.css`, so hashed client builds needed a
+  hand-written `stylesHref: "/" + manifest["src/styles.css"].file`. The
+  shell now resolves it from the manifest. New `stylesEntry` option
+  (default `"src/styles.css"`) names the source file for both modes: dev
+  links `/<stylesEntry>`, prod the hashed file (fallback
+  `/static/styles.css`). `stylesHref` still wins when set.
+
+- **feat(types): `Entry` type exported from `hono-svelte`.** The generated
+  `.d.ts` now also augments the package (`interface Register { entries }`),
+  so helpers that forward an entry to `c.render` can be typed with
+  `import type { Entry } from "hono-svelte"` instead of importing the
+  generated file by relative path. Without the `.d.ts`, `Entry` is
+  `string`. A new `test/types.test.ts` runs `tsc` against the generated
+  declarations.
+
+- **fix(shell): the page's `<svelte:head>` title and description win.**
+  The shell always emitted its default `<title>` first and browsers use the
+  first one, so a static page's `<svelte:head><title>` was ignored (and
+  `shell({ head })` descriptions were duplicated). The document now keeps a
+  single title — `c.render(entry, { title })` > page/layout `<svelte:head>`
+  > `shell({ title })` — and a page description (`<svelte:head>` or
+  `head.description`) removes the one from `shell({ head })`.
+
+- **fix(assets): CSS of shared chunks is linked in production.** Vite
+  attaches a module's CSS to the chunk that owns it, so a layout or
+  component shared by several pages gets its own chunk + CSS file.
+  `manifestCssFor`/`manifestImportsFor` (and therefore `shell({ assets:
+  manifest })`) only read the entry chunk: pages rendered without their
+  layout's styles. Both now walk the static `imports` graph (shared chunks
+  first, cycles handled, `dynamicImports` skipped). `ViteManifestChunk`
+  gains the optional `src`, `name` and `dynamicImports` fields.
+- **fix(vite): static pages and layouts keep their `<style>` after `vite
+  build`.** Server-rendered components have no client bundle, but with
+  vite-plugin-svelte's default `emitCss: true` the compiler emits their CSS
+  as an import that SSR drops — zero-JS pages shipped unstyled. `pages()`
+  now loads static pages and layouts for the server with
+  `css: "injected"` (merged into an existing `<svelte:options>`, explicit
+  `css` respected), so `render()` returns the styles in `head`. New
+  `test/build.test.ts` exercises the real `vite build --ssr` pipeline.
+
 - **fix(scaffold): `isSafeAppPath` normalizes absolute targets.** An
   absolute path such as `/app/../evil.ts` passed the in-root prefix check
   on POSIX (only relative targets went through `resolve()`). Every target is

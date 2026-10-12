@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { getIds } from "../src/ids.js";
 import { MANIFEST_RESOLVED, MANIFEST_ID, ENTRY_PREFIX } from "../src/virtual.js";
-import { pages } from "../src/vite.js";
+import { pages, withInjectedCss } from "../src/vite.js";
 import { newPageFile } from "../src/scaffold.js";
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -58,6 +58,13 @@ describe("pages() plugin", () => {
     expect(code).toContain('"/test/fixtures/pages/admin.svelte"');
   });
 
+  it("virtual entry provides the page context on mount", () => {
+    const code = makePlugin().load(String.fromCharCode(0) + ENTRY_PREFIX + "admin") as string;
+    expect(code).toContain('new Map([[Symbol.for("hono-svelte:page")');
+    expect(code).toContain('target?.getAttribute("data-hs-route")');
+    expect(code).toContain("mount(Page, { target, props, context })");
+  });
+
   it("missing entry fails with a clear error", () => {
     const plugin = makePlugin();
     expect(() => plugin.load(String.fromCharCode(0) + ENTRY_PREFIX + "missing")).toThrowError(/no page found/);
@@ -72,6 +79,11 @@ describe("pages() plugin", () => {
     expect(decl).toContain("HonoSvelteEntries");
     expect(decl).toContain('declare module "hono"');
     expect(decl).toContain('"admin" | "home"');
+  });
+
+  it("typeDeclarations() registers the entry union on the package (Entry type)", () => {
+    const decl = makePlugin().typeDeclarations();
+    expect(decl).toContain('declare module "hono-svelte" {\n  interface Register {\n    entries: HonoSvelteEntries;');
   });
 
   it("virtual manifest lists all entries", () => {
@@ -302,5 +314,31 @@ describe("pages() plugin", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("SSR CSS for server-rendered components", () => {
+  const load = (plugin: ReturnType<typeof makePlugin>, file: string, ssr: boolean) =>
+    (plugin.load as (id: string, options?: { ssr?: boolean }) => unknown).call({}, resolve(pkgRoot, file), { ssr });
+
+  it("static pages are compiled with css=injected on the server only", () => {
+    const plugin = makePlugin();
+    expect(load(plugin, "test/fixtures/pages/home.svelte", true)).toContain('<svelte:options css="injected" />');
+    expect(load(plugin, "test/fixtures/pages/home.svelte", false)).toBeNull();
+  });
+
+  it("client pages keep the default (external CSS, linked from the client build)", () => {
+    expect(load(makePlugin(), "test/fixtures/pages/admin.svelte", true)).toBeNull();
+  });
+
+  it("merges into an existing <svelte:options> and respects an explicit css option", () => {
+    expect(withInjectedCss('<svelte:options namespace="html" />\n<p>x</p>')).toBe(
+      '<svelte:options namespace="html" css="injected" />\n<p>x</p>',
+    );
+    expect(withInjectedCss("<svelte:options runes></svelte:options><p>x</p>")).toBe(
+      '<svelte:options runes css="injected"></svelte:options><p>x</p>',
+    );
+    const explicit = '<svelte:options css="external" /><p>x</p>';
+    expect(withInjectedCss(explicit)).toBe(explicit);
   });
 });

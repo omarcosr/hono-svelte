@@ -4,6 +4,8 @@ import { __resetDataLimitWarned, shell } from "../src/index.js";
 import { getIds } from "../src/ids.js";
 import Home from "./fixtures/pages/home.svelte";
 import PropsPage from "./fixtures/_pages/props.svelte";
+import HeadPage from "./fixtures/_pages/head.svelte";
+import PageInfoPage from "./fixtures/_pages/page-info.svelte";
 
 const staticLoader = async () => ({ default: Home });
 const propsLoader = async () => ({ default: PropsPage });
@@ -66,6 +68,113 @@ describe("shell", () => {
     const html = await (await app.request("/")).text();
     expect(html).toContain("Ada");
     expect(html).not.toContain("<script type=\"module\"");
+  });
+
+  describe("head precedence", () => {
+    const headLoader = async () => ({ default: HeadPage });
+    const count = (html: string, re: RegExp) => html.match(re)?.length ?? 0;
+    const titleOf = (html: string) => html.match(/<title>([^<]*)<\/title>/)?.[1];
+
+    function headApp(opts: { title?: string } = {}) {
+      const app = new Hono();
+      app.use(
+        "/*",
+        shell({ title: "Shell default", head: '<meta name="description" content="Shell description" /><link rel="icon" href="/i.png" />', ssrPages: { head: headLoader, home: staticLoader } }),
+      );
+      app.get("/page", (c) => c.render("head", opts.title ? { title: opts.title } : undefined));
+      app.get("/plain", (c) => c.render("home"));
+      app.get("/props-head", (c) => c.render("home", { head: { description: "Props description" } }));
+      return app;
+    }
+
+    it("the page <svelte:head> title and description replace the shell defaults", async () => {
+      const html = await (await headApp().request("/page")).text();
+      expect(count(html, /<title>/g)).toBe(1);
+      expect(titleOf(html)).toBe("Page title");
+      expect(count(html, /name="description"/g)).toBe(1);
+      expect(html).toContain('content="Page description"');
+      expect(html).toContain('<link rel="icon" href="/i.png" />');
+    });
+
+    it("an explicit c.render title wins over the page <svelte:head>", async () => {
+      const html = await (await headApp({ title: "Explicit" }).request("/page")).text();
+      expect(count(html, /<title>/g)).toBe(1);
+      expect(titleOf(html)).toBe("Explicit");
+    });
+
+    it("pages without head tags keep the shell title and description", async () => {
+      const html = await (await headApp().request("/plain")).text();
+      expect(titleOf(html)).toBe("Shell default");
+      expect(html).toContain('content="Shell description"');
+    });
+
+    it("a props.head description replaces the shell one", async () => {
+      const html = await (await headApp().request("/props-head")).text();
+      expect(count(html, /name="description"/g)).toBe(1);
+      expect(html).toContain('content="Props description"');
+    });
+  });
+
+  describe("page context (getPage)", () => {
+    const infoLoader = async () => ({ default: PageInfoPage });
+
+    it("server-rendered components read the request path and the Hono route", async () => {
+      const users = new Hono().get("/users/:id", (c) => c.render("info"));
+      const app = new Hono();
+      app.use("/*", shell({ ssrPages: { info: infoLoader } }));
+      app.route("/admin", users);
+      const html = await (await app.request("/admin/users/7")).text();
+      expect(html).toContain('data-path="/admin/users/7" data-route="/admin/users/:id"');
+    });
+
+    it("the root element carries the page info for the client entry", async () => {
+      const app = new Hono();
+      app.use("/*", shell({}));
+      app.get("/items/:id", (c) => c.render("admin"));
+      const html = await (await app.request("/items/%22x%22")).text();
+      expect(html).toContain(`id="${getIds("admin").rootId}" data-hs-path="/items/&quot;x&quot;" data-hs-route="/items/:id"`);
+    });
+
+    it("getPage() outside a shell render fails with a clear error", async () => {
+      const { render } = await import("svelte/server");
+      // render() is lazy: reading `body` runs the component.
+      expect(() => render(PageInfoPage).body).toThrow(/getPage\(\) must be called inside a page or layout/);
+    });
+  });
+
+  describe("htmlAttributes", () => {
+    const htmlTag = async (opts: Parameters<typeof shell>[0], cookie?: string) => {
+      const app = new Hono();
+      app.use("/*", shell(opts));
+      app.get("/", (c) => c.render("admin"));
+      const html = await (await app.request("/", cookie ? { headers: { cookie } } : undefined)).text();
+      return html.match(/<html[^>]*>/)?.[0];
+    };
+
+    it("adds escaped attributes after lang", async () => {
+      expect(await htmlTag({ lang: "pt-BR", htmlAttributes: { "data-theme": 'dark" onload="x', class: "h-full" } })).toBe(
+        '<html lang="pt-BR" data-theme="dark&quot; onload=&quot;x" class="h-full">',
+      );
+    });
+
+    it("a function computes them per request", async () => {
+      const opts = {
+        htmlAttributes: (c: unknown) => ({ "data-theme": (c as { req: { header: (n: string) => string | undefined } }).req.header("cookie")?.includes("theme=light") ? "light" : "dark" }),
+      };
+      expect(await htmlTag(opts)).toBe('<html lang="en" data-theme="dark">');
+      expect(await htmlTag(opts, "theme=light")).toBe('<html lang="en" data-theme="light">');
+    });
+
+    it("rejects invalid names and lang", async () => {
+      const status = async (htmlAttributes: Record<string, string>) => {
+        const app = new Hono();
+        app.use("/*", shell({ htmlAttributes }));
+        app.get("/", (c) => c.render("admin"));
+        return (await app.request("/")).status;
+      };
+      expect(await status({ 'x"><script>': "1" })).toBe(500);
+      expect(await status({ lang: "fr" })).toBe(500);
+    });
   });
 
   it("status and headers are respected", async () => {
@@ -193,6 +302,57 @@ describe("shell", () => {
     expect(html).toContain('href="/static/admin-ABC123.css"');
     expect(html).toContain('rel="modulepreload" href="/static/admin-ABC123.js"');
     expect(html).toContain('href="/static/chunks/chunk-XYZ.js"');
+  });
+
+  it("manifest assets link the CSS of shared chunks (layouts, components)", async () => {
+    const manifest = {
+      "virtual:hono-svelte/entry/dash": {
+        file: "static/dash-1.js",
+        isEntry: true,
+        css: ["static/dash-1.css"],
+        imports: ["_layout.js"],
+      },
+      "_layout.js": { file: "static/chunks/layout-2.js", css: ["static/layout-2.css"], imports: ["_runtime.js"] },
+      "_runtime.js": { file: "static/chunks/runtime-3.js" },
+    };
+    const app = new Hono();
+    app.use("/*", shell({ assets: manifest, isProd: true }));
+    app.get("/", (c) => c.render("dash"));
+    const html = await (await app.request("/")).text();
+    const layoutCss = html.indexOf('rel="stylesheet" href="/static/layout-2.css"');
+    const pageCss = html.indexOf('rel="stylesheet" href="/static/dash-1.css"');
+    expect(layoutCss).toBeGreaterThan(-1);
+    expect(pageCss).toBeGreaterThan(layoutCss);
+    expect(html).toContain('rel="modulepreload" href="/static/chunks/runtime-3.js"');
+  });
+
+  describe("global stylesheet", () => {
+    const linkOf = async (opts: Parameters<typeof shell>[0]) => {
+      const app = new Hono();
+      app.use("/*", shell(opts));
+      app.get("/", (c) => c.render("admin"));
+      const html = await (await app.request("/")).text();
+      return html.match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+    };
+    const manifest = {
+      "src/styles.css": { file: "static/styles-H4SH.css", src: "src/styles.css", isEntry: true },
+      "src/app.css": { file: "static/app-0TH3R.css", src: "src/app.css", isEntry: true },
+    };
+
+    it("resolves the hashed file from the manifest in prod", async () => {
+      expect(await linkOf({ assets: manifest, isProd: true })).toBe("/static/styles-H4SH.css");
+    });
+
+    it("stylesEntry picks another source file, in prod and in dev", async () => {
+      expect(await linkOf({ assets: manifest, isProd: true, stylesEntry: "src/app.css" })).toBe("/static/app-0TH3R.css");
+      expect(await linkOf({ isProd: false, stylesEntry: "/src/app.css" })).toBe("/src/app.css");
+    });
+
+    it("keeps the legacy defaults without a manifest entry, and stylesHref wins", async () => {
+      expect(await linkOf({ isProd: true })).toBe("/static/styles.css");
+      expect(await linkOf({ isProd: false })).toBe("/src/styles.css");
+      expect(await linkOf({ assets: manifest, isProd: true, stylesHref: "/custom.css" })).toBe("/custom.css");
+    });
   });
 
   it("prefetch all emits modulepreload links for other entries", async () => {

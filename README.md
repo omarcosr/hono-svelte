@@ -115,6 +115,8 @@ app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
 
 The rule is simple: **if the `.svelte` file has no `<script>`, the page ships as plain HTML. If it has one, it hydrates on the client** with initial data available via `$props()`.
 
+Server-rendered components (static pages and the layouts wrapping them) have no client bundle, so `pages()` compiles them for the server with `css: "injected"`: their `<style>` blocks arrive inline in the `<head>`. An explicit `<svelte:options css="...">` in the component wins.
+
 Files starting with `_` and `layout.svelte` are ignored (convention for partials and layouts).
 
 ## Passing data to the page
@@ -148,7 +150,7 @@ app.get("/post", (c) =>
 );
 ```
 
-`<svelte:head>` inside pages also works (shell forwards SSR `head`). Page `head` never emits executable inline scripts (CSP-safe; `extra` is for trusted raw HTML like fonts or JSON-LD).
+`<svelte:head>` inside pages also works (shell forwards SSR `head`). The document keeps a single `<title>` and `<meta name="description">`: `c.render(entry, { title })` > the page/layout `<svelte:head>` > `shell({ title })`, and a page description (`<svelte:head>` or `head.description`) replaces one set in `shell({ head })`. Page `head` never emits executable inline scripts (CSP-safe; `extra` is for trusted raw HTML like fonts or JSON-LD).
 
 ## Nested layouts
 
@@ -185,6 +187,26 @@ Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect
 > **Hydration wrapper:** each layout level wraps the page's SSR output in one `<div>` (a Svelte 5 raw-snippet requirement — an empty snippet render breaks hydration). The wrapper is hydration-safe, but it is part of the DOM: account for it in CSS selectors (e.g. `:global(> div)`).
 
 
+## Current page (`getPage`)
+
+Pages and layouts can read the request path and the Hono route pattern that rendered them — e.g. to highlight the active link in a layout nav, ignoring params:
+
+```svelte
+<!-- src/pages/dashboard/layout.svelte -->
+<script lang="ts">
+  import type { Snippet } from "svelte";
+  import { getPage } from "hono-svelte/page";
+
+  let { children }: { children: Snippet } = $props();
+  const page = getPage(); // { path: "/dashboard/users/7", route: "/dashboard/users/:id" }
+</script>
+
+<a href="/dashboard/users" aria-current={page.route.startsWith("/dashboard/users") ? "page" : undefined}>Users</a>
+{@render children()}
+```
+
+It works in server-rendered components (static pages + layouts) and in client pages: the shell passes it as Svelte context on the server and writes it on the root element for the client entry. Call it during component initialisation, like `getContext`.
+
 ## Error pages
 
 ```ts
@@ -192,6 +214,25 @@ import { errorHandler, notFoundHandler } from "hono-svelte";
 
 app.notFound(notFoundHandler()); // renders `404.svelte` with status 404
 app.onError(errorHandler()); // renders `500.svelte` with status 500
+```
+
+Both pages receive `{ status, message }` as props (merged under `data`). `errorHandler` takes the status from errors that carry one (hono's `HTTPException(410, { message })` → 410) and only exposes the error's own message for 4xx — 5xx get `message` (default `"Internal Server Error"`) and are the only ones logged. `json` answers `{ message }` JSON instead of the page, e.g. for API routes:
+
+```ts
+const isApi = (c: Context) => c.req.path.startsWith("/api/");
+
+app.notFound(notFoundHandler({ json: isApi, message: "Page not found" }));
+app.onError(errorHandler({ json: isApi, expose: (err, status) => status < 500 }));
+```
+
+```svelte
+<!-- src/pages/500.svelte -->
+<script lang="ts">
+  let { status, message }: { status: number; message: string } = $props();
+</script>
+
+<h1>{status}</h1>
+<p>{message}</p>
 ```
 
 ## CLI
@@ -229,12 +270,14 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 
 | Option | Default | Description |
 |---|---|---|
-| `title` | `"App"` | Title used when the route doesn't provide one |
+| `title` | `"App"` | Title used when neither `c.render(entry, { title })` nor the page's `<svelte:head>` provides one |
 | `lang` | `"en"` | `<html>` `lang` attribute |
+| `htmlAttributes` | — | Extra `<html>` attributes (`{ "data-theme": "dark" }`) or `(c) => attrs` per request; values escaped |
 | `assetsBase` | `"/static"` | Prefix for JS files in production (legacy; prefer `assets`) |
 | `assets` | `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url` (hashed files) |
 | `isProd` | auto | Force prod/dev asset behavior |
-| `stylesHref` | `"/static/styles.css"` in prod, `"/src/styles.css"` in dev | Global stylesheet (or an `(isProd) => string` function) |
+| `stylesHref` | from `stylesEntry` | Global stylesheet href (or an `(isProd) => string` function); overrides `stylesEntry` |
+| `stylesEntry` | `"src/styles.css"` | Source of the global stylesheet: dev links `/<stylesEntry>`, prod resolves the hashed file from the manifest in `assets` (fallback `/static/styles.css`) |
 | `styles` | `[]` | Extra CSS hrefs emitted per response |
 | `head` | `""` | Extra HTML in `<head>` (fonts, meta tags) |
 | `nonce` | — | CSP nonce string or `(c) => string` (applied to shell `<script>`/`<link>`) |
@@ -304,11 +347,25 @@ const appPages = pages({ dts: true }); // writes src/hono-svelte-entries.d.ts
 // generated src/hono-svelte-entries.d.ts (commit it — CI needs no Vite run)
 export type HonoSvelteEntries = "auth" | "dashboard/index" | "index";
 
+declare module "hono-svelte" {
+  interface Register {
+    entries: HonoSvelteEntries;
+  }
+}
+
 declare module "hono" {
   interface ContextRenderer {
     (entryName: HonoSvelteEntries, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
   }
 }
+```
+
+Helpers that forward an entry to `c.render` use the `Entry` type exported by the package — the generated union once the `.d.ts` is in the program, `string` without it. No import of the generated file needed:
+
+```ts
+import type { Entry } from "hono-svelte";
+
+export const page = (entry: Entry, title: string) => (c: Context) => c.render(entry, { title });
 ```
 
 `dts: "path/to/entries.d.ts"` sets a custom path (relative to the Vite root). The file regenerates on `buildStart` and via the dev watcher when entries change. Without `dts` (default `false`), declare the renderer manually with a plain `string`:
@@ -369,9 +426,10 @@ extracted declarations.
 
 ## Production tips
 
-- Pass the Vite manifest to `shell({ assets: manifest })` for hashed files; manifest CSS and shared chunks are emitted automatically (`modulepreload`).
+- Pass the Vite manifest to `shell({ assets: manifest })` for hashed files — including the global stylesheet: with `styles: resolve("src/styles.css")` in the client input (or `stylesEntry` pointing at another file), its hashed name comes from the manifest, no hand-written `stylesHref`. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
 - Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
+- Theme attributes on the root element: `shell({ htmlAttributes: { "data-theme": "dark" } })` (DaisyUI), or a function reading a cookie for per-user themes.
 - The shell emits a neutral `<body>` (no framework classes) — style `body`/`html` from your global stylesheet (`stylesHref`), e.g. `body { @apply bg-base-200 min-h-screen text-base-content; }` with Tailwind/DaisyUI.
 - Run both client and server builds before serving; the example in `examples/playground/` shows the full setup.
 

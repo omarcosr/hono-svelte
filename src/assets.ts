@@ -6,8 +6,11 @@
 
 export type ViteManifestChunk = {
   file: string;
+  src?: string;
+  name?: string;
   css?: string[];
   imports?: string[];
+  dynamicImports?: string[];
   isEntry?: boolean;
 };
 
@@ -58,30 +61,66 @@ export function createManifestAssets(
   };
 }
 
-/** Hashed CSS files for an entry, via the Vite manifest. */
+/**
+ * The entry chunk plus every chunk it reaches through static `imports`,
+ * dependencies first (the order the browser evaluates them). Vite attaches
+ * a module's CSS to the chunk that owns the module — a layout or component
+ * shared by several pages lives in its own chunk, so reading only the entry
+ * chunk misses its styles. `dynamicImports` are not followed: they load
+ * later, with their own CSS handling.
+ */
+function staticChunkGraph(manifest: ViteManifest, entryName: string): ViteManifestChunk[] {
+  const entry = findChunk(manifest, entryName);
+  if (!entry) return [];
+  const ordered: ViteManifestChunk[] = [];
+  const seen = new Set<ViteManifestChunk>();
+  const visit = (chunk: ViteManifestChunk): void => {
+    if (seen.has(chunk)) return;
+    seen.add(chunk);
+    for (const key of chunk.imports ?? []) {
+      const dep = manifest[key];
+      if (dep) visit(dep);
+    }
+    ordered.push(chunk);
+  };
+  visit(entry);
+  return ordered;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+/**
+ * Hashed CSS files for an entry, via the Vite manifest — including the CSS
+ * of every statically imported chunk (shared layouts, components), shared
+ * chunks first so the entry's own rules come last.
+ */
 export function manifestCssFor(
   manifest: ViteManifest,
   entryName: string,
   prefix = "/",
 ): string[] {
-  const chunk = findChunk(manifest, entryName);
-  return (chunk?.css ?? []).map((f) => joinPrefix(prefix, f));
+  return unique(
+    staticChunkGraph(manifest, entryName).flatMap((chunk) => (chunk.css ?? []).map((f) => joinPrefix(prefix, f))),
+  );
 }
 
-/** Shared-chunk URLs (for `modulepreload`), via the Vite manifest. */
+/**
+ * Shared-chunk URLs (for `modulepreload`), via the Vite manifest: every chunk
+ * the entry reaches through static imports, not only the direct ones.
+ */
 export function manifestImportsFor(
   manifest: ViteManifest,
   entryName: string,
   prefix = "/",
 ): string[] {
-  const chunk = findChunk(manifest, entryName);
-  if (!chunk) return [];
-  const out: string[] = [];
-  for (const imp of chunk.imports ?? []) {
-    const dep = manifest[imp];
-    if (dep?.file) out.push(joinPrefix(prefix, dep.file));
-  }
-  return out;
+  const entry = findChunk(manifest, entryName);
+  return unique(
+    staticChunkGraph(manifest, entryName)
+      .filter((chunk) => chunk !== entry && chunk.file)
+      .map((chunk) => joinPrefix(prefix, chunk.file)),
+  );
 }
 
 /** Long-term caching for hashed `/static` files. */

@@ -77,6 +77,25 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Server-rendered components (static pages and layouts) have no client
+ * bundle, so their `<style>` must travel inside the SSR output. With
+ * vite-plugin-svelte's default `emitCss: true` the compiler runs with
+ * `css: "external"` and the styles become a CSS import that an SSR build
+ * drops. Forcing `css: "injected"` makes `render()` return them in `head`.
+ * An explicit `css` option on the component is respected.
+ */
+export function withInjectedCss(source: string): string {
+  const options = /<svelte:options\b([^>]*?)(\s*\/?)>/.exec(source);
+  if (!options) return source + '\n<svelte:options css="injected" />\n';
+  if (/\bcss\s*=/.test(options[1])) return source;
+  return (
+    source.slice(0, options.index) +
+    `<svelte:options${options[1]} css="injected"${options[2]}>` +
+    source.slice(options.index + options[0].length)
+  );
+}
+
 function entryNameFromFile(file: string): string {
   return normalizeSlashes(file).slice(0, -".svelte".length);
 }
@@ -283,6 +302,14 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
             "",
           ]
         : []),
+      // Registers the union on the package itself so apps can write
+      // `import type { Entry } from "hono-svelte"` instead of importing this file.
+      `declare module "hono-svelte" {`,
+      `  interface Register {`,
+      `    entries: ${typeName};`,
+      `  }`,
+      `}`,
+      "",
       `declare module "hono" {`,
       `  interface ContextRenderer {`,
       // Typed overloads come first, then the union catch-all: overload
@@ -341,6 +368,18 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       throw new Error("hono-svelte: pagesDir precisa estar dentro do root do Vite");
     }
     return "/" + normalizeSlashes(rel);
+  }
+
+  /** Absolute path when `id` is a static page or a layout (the components the shell SSRs). */
+  function ssrRenderedFile(id: string): string | null {
+    // Windows paths are case-insensitive and Vite may report a different drive-letter case.
+    const key = (p: string) => (process.platform === "win32" ? normalizeSlashes(p).toLowerCase() : normalizeSlashes(p));
+    const target = key(id);
+    const pages = listPages();
+    for (const file of [...pages.filter((p) => p.isStatic).map((p) => p.absFile), ...cachedLayouts.map((l) => l.absFile)]) {
+      if (key(file) === target) return file;
+    }
+    return null;
   }
 
   function manifestSource(): string {
@@ -403,13 +442,17 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       "const target = document.getElementById(" + JSON.stringify(ids.rootId) + ");\n" +
       "const raw = document.getElementById(" + JSON.stringify(ids.dataId) + ")?.textContent;\n" +
       "const props = raw ? JSON.parse(raw) : {};\n" +
+      // Same context the shell gives server-rendered components (see src/page.ts).
+      "const context = new Map([[Symbol.for(\"hono-svelte:page\"), {" +
+      " path: target?.getAttribute(\"data-hs-path\") ?? location.pathname," +
+      " route: target?.getAttribute(\"data-hs-route\") ?? location.pathname }]]);\n" +
       entryMountSource(page) +
       "\n"
     );
   }
 
   function entryMountSource(page: PageSpec): string {
-    if (page.layouts.length === 0) return "if (target) mount(Page, { target, props });";
+    if (page.layouts.length === 0) return "if (target) mount(Page, { target, props, context });";
     // NOTE: createRawSnippet's snippet MUST render one wrapper element
     // (client impl takes get_first_child(fragment) and calls setup(element)).
     // An empty render ("") yields a null element -> "Cannot set properties
@@ -419,9 +462,9 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       "if (target) {",
       "  const __kids = createRawSnippet(() => ({",
       "    render: () => \"<div></div>\",",
-      "    setup: (el) => { hydrate(Page, { target: el, props }); },",
+      "    setup: (el) => { hydrate(Page, { target: el, props, context }); },",
       "  }));",
-      "  hydrate(Layout0, { target, props: { ...props, children: __kids } });",
+      "  hydrate(Layout0, { target, props: { ...props, children: __kids }, context });",
       "}",
     ].join("\n");
   }
@@ -462,7 +505,6 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     },
     load(id, options) {
       if (id === MANIFEST_RESOLVED) return manifestSource();
-      void options;
       if (id.startsWith(ENTRY_RESOLVED_PREFIX)) {
         const entryName = id.slice(ENTRY_RESOLVED_PREFIX.length);
         const page = listPages().find((p) => p.entryName === entryName);
@@ -470,6 +512,16 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
           throw new Error("hono-svelte: no page found for entry: " + entryName);
         }
         return entrySource(page);
+      }
+      // Vite 8 passes the environment on the plugin context; `options.ssr` covers older call sites.
+      const context = this as { environment?: { config?: { consumer?: string } }; addWatchFile?: (path: string) => void } | undefined;
+      const isSsr = options?.ssr === true || context?.environment?.config?.consumer === "server";
+      if (isSsr && !id.includes("?")) {
+        const file = ssrRenderedFile(id);
+        if (file) {
+          context?.addWatchFile?.(file);
+          return withInjectedCss(readFileSync(file, "utf8"));
+        }
       }
       return null;
     },

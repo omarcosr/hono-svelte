@@ -9,6 +9,7 @@ import {
 } from "./assets.js";
 import { renderHead, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
+import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
 import {
   allEntries as autoAllEntries,
   ssrLayouts as autoSsrLayouts,
@@ -32,10 +33,11 @@ export type {
   ViteManifestChunk,
 } from "./assets.js";
 export { errorHandler, notFoundHandler } from "./handlers.js";
-export type { ErrorPageOptions, ServerErrorHandlerOptions } from "./handlers.js";
+export type { ErrorPageData, ErrorPageOptions, ServerErrorHandlerOptions } from "./handlers.js";
 export { renderHead } from "./head.js";
 export type { HeadMetaItem, HeadProps } from "./head.js";
 export { getIds } from "./ids.js";
+export type { PageInfo } from "./page.js";
 export type { SharedIds } from "./ids.js";
 export { checkAppLink, doctorChecks, initFiles, isSafeAppPath, isValidPageName, newPageFile } from "./scaffold.js";
 export type { DoctorIssue, DoctorOptions, InitFile, InitFlavor } from "./scaffold.js";
@@ -55,6 +57,25 @@ export type { DoctorIssue, DoctorOptions, InitFile, InitFlavor } from "./scaffol
 //   option exists only as a manual override.
 
 export type SsrPageLoader = () => Promise<{ default: unknown }>;
+
+/**
+ * Type registry filled by the generated `.d.ts` (`pages({ dts: true })`):
+ *
+ * ```ts
+ * declare module "hono-svelte" {
+ *   interface Register { entries: "index" | "dashboard/index" }
+ * }
+ * ```
+ */
+export interface Register {}
+
+/**
+ * Page entry names accepted by `c.render`. The union from the generated
+ * `.d.ts` once it is part of the program; plain `string` without it.
+ * Use it to type helpers that forward an entry to `c.render`:
+ * `function page(entry: Entry) { … }`.
+ */
+export type Entry = Register extends { entries: infer E extends string } ? E : string;
 
 export type RenderProps<TData = Record<string, unknown>> = {
   title?: string;
@@ -83,6 +104,15 @@ export type ShellOptions = {
   /** Extra CSS links per HTML response. Strings are hrefs verbatim. */
   styles?: string[];
   stylesHref?: string | ((isProd: boolean) => string);
+  /**
+   * Source path of the global stylesheet, relative to the Vite root — the
+   * same file passed to the client build input. Dev links `/<stylesEntry>`
+   * (served by Vite); prod resolves the hashed file from the manifest given
+   * in `assets`, falling back to `/static/styles.css`. `stylesHref` wins
+   * when set.
+   * @default "src/styles.css"
+   */
+  stylesEntry?: string;
   /** Global head HTML (fonts, meta) — page `head` prop is appended after it. */
   head?: string;
   /**
@@ -127,6 +157,13 @@ export type ShellOptions = {
    * (`import.meta.env.PROD`, else `NODE_ENV === "production"`).
    */
   isProd?: boolean;
+  /**
+   * Extra attributes on `<html>` (`lang` comes from the `lang` option), e.g.
+   * `{ "data-theme": "dark" }` for DaisyUI themes. A function receives the
+   * Hono context (per-request theme from a cookie). Values are escaped;
+   * invalid attribute names throw.
+   */
+  htmlAttributes?: Record<string, string> | ((c: unknown) => Record<string, string>);
 };
 
 export type ShellContext = {
@@ -145,6 +182,51 @@ function isValidEntryName(entryName: string): boolean {
   return parts.every(
     (p) => p.length > 0 && p !== "." && p !== ".." && !p.includes(String.fromCharCode(0)),
   );
+}
+
+const TITLE_TAG = /<title\b[^>]*>[\s\S]*?<\/title>/gi;
+const DESCRIPTION_META = /<meta\b(?=[^>]*\bname=["']description["'])[^>]*>/gi;
+
+/**
+ * One `<title>` / `<meta name="description">` per document, page first.
+ * Browsers use the FIRST `<title>`, so the shell default used to beat the
+ * page's `<svelte:head>`. Precedence: `c.render(entry, { title })` > the
+ * page/layout `<svelte:head>` > `shell({ title })`; for the description,
+ * the page (`<svelte:head>` or `props.head`) > `shell({ head })`.
+ */
+function resolveHeadConflicts(input: {
+  shellTitle: string;
+  explicitTitle: string | undefined;
+  shellHead: string;
+  ssrHead: string;
+  pageHead: string;
+}): { title: string; shellHead: string; ssrHead: string } {
+  let { shellHead, ssrHead } = input;
+  const pageHasTitle = new RegExp(TITLE_TAG.source, "i").test(ssrHead);
+  let title = "";
+  if (input.explicitTitle !== undefined) {
+    title = `<title>${escapeAttr(input.explicitTitle)}</title>`;
+    ssrHead = ssrHead.replace(TITLE_TAG, "");
+  } else if (!pageHasTitle) {
+    title = `<title>${escapeAttr(input.shellTitle)}</title>`;
+  }
+  if (new RegExp(DESCRIPTION_META.source, "i").test(ssrHead + input.pageHead)) {
+    shellHead = shellHead.replace(DESCRIPTION_META, "");
+  }
+  return { title, shellHead, ssrHead };
+}
+
+const ATTRIBUTE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;
+
+function renderAttributes(attributes: Record<string, string>): string {
+  let out = "";
+  for (const [name, value] of Object.entries(attributes)) {
+    if (!ATTRIBUTE_NAME.test(name) || name.toLowerCase() === "lang") {
+      throw new Error(`hono-svelte: invalid htmlAttributes name: ${JSON.stringify(name)} (use the lang option for lang)`);
+    }
+    out += ` ${name}="${escapeAttr(String(value))}"`;
+  }
+  return out;
 }
 
 function nonceAttr(nonce: string | undefined): string {
@@ -306,6 +388,10 @@ function prefetchHoverScript(
 export function shell(options: ShellOptions = {}) {
   const titleDefault = options.title ?? "App";
   const lang = options.lang ?? "en";
+  const htmlAttributes = (c: unknown): string => {
+    const attrs = typeof options.htmlAttributes === "function" ? options.htmlAttributes(c) : options.htmlAttributes;
+    return attrs ? renderAttributes(attrs) : "";
+  };
   const assetsBase = (options.assetsBase ?? "/static").replace(/\/$/, "");
   const assetsOpt = options.assets ?? assetsBase;
   const head = options.head ?? "";
@@ -319,6 +405,12 @@ export function shell(options: ShellOptions = {}) {
     typeof options.stylesHref === "function"
       ? options.stylesHref
       : () => options.stylesHref as string | undefined;
+  const stylesEntry = (options.stylesEntry ?? "src/styles.css").replace(/^\/+/, "");
+  function defaultStylesHref(isProd: boolean): string {
+    if (!isProd) return "/" + stylesEntry;
+    const file = manifestFor(assetsOpt)?.[stylesEntry]?.file;
+    return file ? "/" + file.replace(/^\/+/, "") : "/static/styles.css";
+  }
   // Zero config: with pages() active, this module is redirected to the
   // in-memory manifest by the plugin's resolveId (enforce: "pre").
   const ssrPages = options.ssrPages ?? autoSsrPages;
@@ -384,12 +476,14 @@ export function shell(options: ShellOptions = {}) {
     pageData: Record<string, unknown> | undefined,
     nonce: string | undefined,
     layoutChain: SsrPageLoader[],
+    page: PageInfo,
   ): Promise<{ html: string; head: string }> {
     const mod = await loader();
     const { render } = await import("svelte/server");
     const renderOpts: Record<string, unknown> = {};
     if (pageData !== undefined) renderOpts.props = pageData;
     if (nonce) renderOpts.csp = { nonce };
+    renderOpts.context = pageContext(page);
     const rendered = render(mod.default as Component, renderOpts) as {
       html?: string;
       body?: string;
@@ -412,6 +506,7 @@ export function shell(options: ShellOptions = {}) {
           ...(pageData !== undefined ? { props: pageData } : {}),
           props: { ...pageData, children: childSnippet },
           ...(nonce ? { csp: { nonce } } : {}),
+          context: pageContext(page),
         }) as { html?: string; body?: string; head?: string | (() => string) };
         html = wrapped.html ?? wrapped.body ?? "";
         const layoutHead =
@@ -469,12 +564,12 @@ export function shell(options: ShellOptions = {}) {
         }
       }
       const ids = getIds(entryName);
-      const title = props?.title ?? titleDefault;
+      const page: PageInfo = { path: c.req.path, route: c.req.routePath ?? c.req.path };
       const isProd = options.isProd ?? detectProd();
       const nonce = resolveNonce(c);
       const nAttr = nonceAttr(nonce);
       const stylesHref =
-        resolveStyles(isProd) ?? (isProd ? "/static/styles.css" : "/src/styles.css");
+        resolveStyles(isProd) ?? defaultStylesHref(isProd);
       const { html: dataHtml } = serializePageData(entryName, props?.data, ids.dataId, dataLimit);
       const lt = String.fromCharCode(60);
 
@@ -482,7 +577,7 @@ export function shell(options: ShellOptions = {}) {
       let ssrHead = "";
       if (isSsr) {
         try {
-          const rendered = await renderSsrBody(loader as SsrPageLoader, props?.data, nonce, chain);
+          const rendered = await renderSsrBody(loader as SsrPageLoader, props?.data, nonce, chain, page);
           bodyHtml = rendered.html;
           ssrHead = rendered.head;
         } catch (err) {
@@ -549,19 +644,27 @@ export function shell(options: ShellOptions = {}) {
           .map((href) => lt + `link rel="stylesheet" href="${escapeAttr(href)}"${nAttr} />`)
           .join("");
 
+      const resolvedHead = resolveHeadConflicts({
+        shellTitle: titleDefault,
+        explicitTitle: props?.title,
+        shellHead: head,
+        ssrHead,
+        pageHead,
+      });
+
       return c.html(
-        `<!doctype html><html lang="${escapeAttr(lang)}"><head><title>${escapeAttr(title)}</title>` +
+        `<!doctype html><html lang="${escapeAttr(lang)}"${htmlAttributes(c)}><head>${resolvedHead.title}` +
           `<meta charset="utf-8" /><meta content="width=device-width, initial-scale=1" name="viewport" />` +
-          (head ? head : "") +
+          resolvedHead.shellHead +
           `<link rel="stylesheet" href="${escapeAttr(stylesHref)}"${nAttr} />` +
           cssLinks +
-          ssrHead +
+          resolvedHead.ssrHead +
           pageHead +
           preloadHtml +
           prefetchHtml +
           scriptHtml +
           `</head>` +
-          `<body><div id="${ids.rootId}">${bodyHtml}</div>` +
+          `<body><div id="${ids.rootId}" ${PAGE_ATTRIBUTES.path}="${escapeAttr(page.path)}" ${PAGE_ATTRIBUTES.route}="${escapeAttr(page.route)}">${bodyHtml}</div>` +
           dataHtml +
           `</body></html>`,
         status,
