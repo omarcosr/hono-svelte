@@ -157,6 +157,13 @@ export type ShellOptions = {
    * (`import.meta.env.PROD`, else `NODE_ENV === "production"`).
    */
   isProd?: boolean;
+  /**
+   * Extra attributes on `<html>` (`lang` comes from the `lang` option), e.g.
+   * `{ "data-theme": "dark" }` for DaisyUI themes. A function receives the
+   * Hono context (per-request theme from a cookie). Values are escaped;
+   * invalid attribute names throw.
+   */
+  htmlAttributes?: Record<string, string> | ((c: unknown) => Record<string, string>);
 };
 
 export type ShellContext = {
@@ -207,6 +214,19 @@ function resolveHeadConflicts(input: {
     shellHead = shellHead.replace(DESCRIPTION_META, "");
   }
   return { title, shellHead, ssrHead };
+}
+
+const ATTRIBUTE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;
+
+function renderAttributes(attributes: Record<string, string>): string {
+  let out = "";
+  for (const [name, value] of Object.entries(attributes)) {
+    if (!ATTRIBUTE_NAME.test(name) || name.toLowerCase() === "lang") {
+      throw new Error(`hono-svelte: invalid htmlAttributes name: ${JSON.stringify(name)} (use the lang option for lang)`);
+    }
+    out += ` ${name}="${escapeAttr(String(value))}"`;
+  }
+  return out;
 }
 
 function nonceAttr(nonce: string | undefined): string {
@@ -368,6 +388,10 @@ function prefetchHoverScript(
 export function shell(options: ShellOptions = {}) {
   const titleDefault = options.title ?? "App";
   const lang = options.lang ?? "en";
+  const htmlAttributes = (c: unknown): string => {
+    const attrs = typeof options.htmlAttributes === "function" ? options.htmlAttributes(c) : options.htmlAttributes;
+    return attrs ? renderAttributes(attrs) : "";
+  };
   const assetsBase = (options.assetsBase ?? "/static").replace(/\/$/, "");
   const assetsOpt = options.assets ?? assetsBase;
   const head = options.head ?? "";
@@ -629,7 +653,7 @@ export function shell(options: ShellOptions = {}) {
       });
 
       return c.html(
-        `<!doctype html><html lang="${escapeAttr(lang)}"><head>${resolvedHead.title}` +
+        `<!doctype html><html lang="${escapeAttr(lang)}"${htmlAttributes(c)}><head>${resolvedHead.title}` +
           `<meta charset="utf-8" /><meta content="width=device-width, initial-scale=1" name="viewport" />` +
           resolvedHead.shellHead +
           `<link rel="stylesheet" href="${escapeAttr(stylesHref)}"${nAttr} />` +
