@@ -272,6 +272,7 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 |---|---|---|
 | `title` | `"App"` | Title used when neither `c.render(entry, { title })` nor the page's `<svelte:head>` provides one |
 | `lang` | `"en"` | `<html>` `lang` attribute |
+| `htmlAttributes` | — | Extra `<html>` attributes (`{ "data-theme": "dark" }`) or `(c) => attrs` per request; values escaped |
 | `assetsBase` | `"/static"` | Prefix for JS files in production (legacy; prefer `assets`) |
 | `assets` | `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url` (hashed files) |
 | `isProd` | auto | Force prod/dev asset behavior |
@@ -428,6 +429,7 @@ extracted declarations.
 - Pass the Vite manifest to `shell({ assets: manifest })` for hashed files — including the global stylesheet: with `styles: resolve("src/styles.css")` in the client input (or `stylesEntry` pointing at another file), its hashed name comes from the manifest, no hand-written `stylesHref`. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
 - Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
+- Theme attributes on the root element: `shell({ htmlAttributes: { "data-theme": "dark" } })` (DaisyUI), or a function reading a cookie for per-user themes.
 - The shell emits a neutral `<body>` (no framework classes) — style `body`/`html` from your global stylesheet (`stylesHref`), e.g. `body { @apply bg-base-200 min-h-screen text-base-content; }` with Tailwind/DaisyUI.
 - Run both client and server builds before serving; the example in `examples/playground/` shows the full setup.
 
