@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **feat(shell): global stylesheet resolved from the manifest
+  (`stylesEntry`).** With `assets: manifest`, the global CSS kept pointing at
+  the unhashed `/static/styles.css`, so hashed client builds needed a
+  hand-written `stylesHref: "/" + manifest["src/styles.css"].file`. The
+  shell now resolves it from the manifest. New `stylesEntry` option
+  (default `"src/styles.css"`) names the source file for both modes: dev
+  links `/<stylesEntry>`, prod the hashed file (fallback
+  `/static/styles.css`). `stylesHref` still wins when set.
+
 - **feat(types): `Entry` type exported from `hono-svelte`.** The generated
   `.d.ts` now also augments the package (`interface Register { entries }`),
   so helpers that forward an entry to `c.render` can be typed with
