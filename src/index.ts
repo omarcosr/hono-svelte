@@ -56,6 +56,25 @@ export type { DoctorIssue, DoctorOptions, InitFile, InitFlavor } from "./scaffol
 
 export type SsrPageLoader = () => Promise<{ default: unknown }>;
 
+/**
+ * Type registry filled by the generated `.d.ts` (`pages({ dts: true })`):
+ *
+ * ```ts
+ * declare module "hono-svelte" {
+ *   interface Register { entries: "index" | "dashboard/index" }
+ * }
+ * ```
+ */
+export interface Register {}
+
+/**
+ * Page entry names accepted by `c.render`. The union from the generated
+ * `.d.ts` once it is part of the program; plain `string` without it.
+ * Use it to type helpers that forward an entry to `c.render`:
+ * `function page(entry: Entry) { … }`.
+ */
+export type Entry = Register extends { entries: infer E extends string } ? E : string;
+
 export type RenderProps<TData = Record<string, unknown>> = {
   title?: string;
   data?: TData;
