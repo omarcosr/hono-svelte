@@ -115,6 +115,8 @@ app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
 
 The rule is simple: **if the `.svelte` file has no `<script>`, the page ships as plain HTML. If it has one, it hydrates on the client** with initial data available via `$props()`.
 
+Server-rendered components (static pages and the layouts wrapping them) have no client bundle, so `pages()` compiles them for the server with `css: "injected"`: their `<style>` blocks arrive inline in the `<head>`. An explicit `<svelte:options css="...">` in the component wins.
+
 Files starting with `_` and `layout.svelte` are ignored (convention for partials and layouts).
 
 ## Passing data to the page
