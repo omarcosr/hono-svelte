@@ -4,6 +4,7 @@ import { __resetDataLimitWarned, shell } from "../src/index.js";
 import { getIds } from "../src/ids.js";
 import Home from "./fixtures/pages/home.svelte";
 import PropsPage from "./fixtures/_pages/props.svelte";
+import HeadPage from "./fixtures/_pages/head.svelte";
 
 const staticLoader = async () => ({ default: Home });
 const propsLoader = async () => ({ default: PropsPage });
@@ -66,6 +67,51 @@ describe("shell", () => {
     const html = await (await app.request("/")).text();
     expect(html).toContain("Ada");
     expect(html).not.toContain("<script type=\"module\"");
+  });
+
+  describe("head precedence", () => {
+    const headLoader = async () => ({ default: HeadPage });
+    const count = (html: string, re: RegExp) => html.match(re)?.length ?? 0;
+    const titleOf = (html: string) => html.match(/<title>([^<]*)<\/title>/)?.[1];
+
+    function headApp(opts: { title?: string } = {}) {
+      const app = new Hono();
+      app.use(
+        "/*",
+        shell({ title: "Shell default", head: '<meta name="description" content="Shell description" /><link rel="icon" href="/i.png" />', ssrPages: { head: headLoader, home: staticLoader } }),
+      );
+      app.get("/page", (c) => c.render("head", opts.title ? { title: opts.title } : undefined));
+      app.get("/plain", (c) => c.render("home"));
+      app.get("/props-head", (c) => c.render("home", { head: { description: "Props description" } }));
+      return app;
+    }
+
+    it("the page <svelte:head> title and description replace the shell defaults", async () => {
+      const html = await (await headApp().request("/page")).text();
+      expect(count(html, /<title>/g)).toBe(1);
+      expect(titleOf(html)).toBe("Page title");
+      expect(count(html, /name="description"/g)).toBe(1);
+      expect(html).toContain('content="Page description"');
+      expect(html).toContain('<link rel="icon" href="/i.png" />');
+    });
+
+    it("an explicit c.render title wins over the page <svelte:head>", async () => {
+      const html = await (await headApp({ title: "Explicit" }).request("/page")).text();
+      expect(count(html, /<title>/g)).toBe(1);
+      expect(titleOf(html)).toBe("Explicit");
+    });
+
+    it("pages without head tags keep the shell title and description", async () => {
+      const html = await (await headApp().request("/plain")).text();
+      expect(titleOf(html)).toBe("Shell default");
+      expect(html).toContain('content="Shell description"');
+    });
+
+    it("a props.head description replaces the shell one", async () => {
+      const html = await (await headApp().request("/props-head")).text();
+      expect(count(html, /name="description"/g)).toBe(1);
+      expect(html).toContain('content="Props description"');
+    });
   });
 
   it("status and headers are respected", async () => {
