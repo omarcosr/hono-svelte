@@ -1,6 +1,6 @@
 {
   "name": "hono-svelte",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Server-side shell + multi-entry Svelte pages for Hono apps",
   "keywords": [
     "hono",
@@ -50,7 +50,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prepublishOnly": "npm run build && npm test && npx publint",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "test:e2e": "npm run build && cd e2e && npm run build && npm test"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",

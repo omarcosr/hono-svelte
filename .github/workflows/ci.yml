@@ -5,28 +5,85 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
+    name: package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [26]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 26
       - run: npm install
+      - run: npm run typecheck
       - run: npm run build
       - run: npm test
       - run: npx publint
 
+  compat:
+    # Peer-dependency floor and ceiling: the exact minimums declared in
+    # peerDependencies, and the newest releases inside the same majors.
+    name: compat (${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - deps: minimum
+            install: hono@4.13.8 svelte@5.57.0 vite@8.3.0
+          - deps: latest
+            install: hono@^4 svelte@^5 vite@^8 @sveltejs/vite-plugin-svelte@^7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: npm install
+      - run: npm install --no-save ${{ matrix.install }}
+      - run: npm ls hono svelte vite @sveltejs/vite-plugin-svelte
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npx vitest run
+
+  e2e:
+    # Browser contract suite (Playwright): the same tests against hono-svelte
+    # on Node, hono-svelte on Bun, and SvelteKit as the reference — see e2e/README.md.
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - uses: oven-sh/setup-bun@v2
+      - run: npm install && npm run build
+      - run: npm ci
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - run: npm run build
+        working-directory: e2e
+      - run: npm test
+        working-directory: e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: e2e/test-results
+          retention-days: 7
+
   scaffold:
     # Drift guard: proves `init --full` yields an app that installs,
     # typechecks and builds against THIS commit (hono-svelte resolved from
-    # the repo, not from the registry). Locally validated end to end.
+    # the repo, not from the registry).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,18 +103,14 @@ jobs:
 
   example:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [26]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 26
       # The example's build script chains `bun run build:client && bun run build:server`.
       - uses: oven-sh/setup-bun@v2
-      - name: Build package (dist exigido pelo exemplo)
+      - name: Build package (dist required by the example)
         run: npm install && npm run build
       - name: Install example
         run: npm install
