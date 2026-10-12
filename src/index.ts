@@ -33,7 +33,7 @@ export type {
   ViteManifestChunk,
 } from "./assets.js";
 export { errorHandler, notFoundHandler } from "./handlers.js";
-export type { ErrorPageOptions, ServerErrorHandlerOptions } from "./handlers.js";
+export type { ErrorPageData, ErrorPageOptions, ServerErrorHandlerOptions } from "./handlers.js";
 export { renderHead } from "./head.js";
 export type { HeadMetaItem, HeadProps } from "./head.js";
 export { getIds } from "./ids.js";

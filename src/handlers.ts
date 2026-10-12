@@ -15,50 +15,86 @@
 import type { HeadProps } from "./head.js";
 import type { RenderProps } from "./index.js";
 
+/** Data every error page receives (merged under `opts.data`). */
+export type ErrorPageData = {
+  status: number;
+  message: string;
+};
+
 export type ErrorPageOptions = {
   /** Entry name. @default "404" (not-found) / "500" (error) */
   entry?: string;
   title?: string;
+  /** Extra page data, merged over `{ status, message }`. */
   data?: Record<string, unknown>;
   head?: string | HeadProps;
+  /**
+   * Answer `{ message }` JSON with the same status instead of rendering the
+   * page — e.g. `(c) => c.req.path.startsWith("/api/")` so API clients never
+   * get an HTML document.
+   */
+  json?: (c: any) => boolean;
 };
 
 type EntryRenderFn = (entryName: string, props?: RenderProps) => Response | Promise<Response>;
+type JsonFn = (body: unknown, status: number) => Response;
 
 function entryRender(c: any): EntryRenderFn {
   return (c as unknown as { render: EntryRenderFn }).render;
 }
 
-function pageProps(opts: ErrorPageOptions, status: number): RenderProps {
-  return {
+function respond(c: any, opts: ErrorPageOptions, entry: string, page: ErrorPageData): Response | Promise<Response> {
+  if (opts.json?.(c)) {
+    return (c as unknown as { json: JsonFn }).json({ message: page.message }, page.status);
+  }
+  return entryRender(c)(entry, {
     title: opts.title,
-    data: opts.data,
+    data: { ...page, ...opts.data },
     head: opts.head,
-    status,
-  };
+    status: page.status,
+  });
 }
 
 /** Hono `notFound` handler: `app.notFound(notFoundHandler())`. */
-export function notFoundHandler(opts: ErrorPageOptions = {}) {
+export function notFoundHandler(opts: ErrorPageOptions & { message?: string } = {}) {
   const entry = opts.entry ?? "404";
+  const message = opts.message ?? "Not Found";
   // See the file header for why the context param stays `any`.
-  return (c: any): Response | Promise<Response> => {
-    return entryRender(c)(entry, pageProps(opts, 404));
-  };
+  return (c: any): Response | Promise<Response> => respond(c, opts, entry, { status: 404, message });
 }
 
 export type ServerErrorHandlerOptions = ErrorPageOptions & {
   /** Log the error. `true` = `console.error`. @default true */
   log?: boolean | ((err: unknown) => void);
+  /** Message for errors whose own message is not exposed. @default "Internal Server Error" */
+  message?: string;
+  /**
+   * Whether the error's own message reaches the page/JSON. Default: only for
+   * errors carrying a 4xx `status` (e.g. hono's `HTTPException(404, …)`) —
+   * 5xx and unknown errors get `message`, never internals.
+   */
+  expose?: (err: Error, status: number) => boolean;
 };
+
+/** HTTP status carried by the error (hono's `HTTPException` and friends), else 500. */
+function statusOf(err: Error): number {
+  const status = (err as { status?: unknown }).status;
+  return typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
+}
 
 /** Hono `onError` handler: `app.onError(errorHandler())`. */
 export function errorHandler(opts: ServerErrorHandlerOptions = {}) {
   const entry = opts.entry ?? "500";
   const log = opts.log ?? true;
+  const fallback = opts.message ?? "Internal Server Error";
+  const expose = opts.expose ?? ((_err: Error, status: number) => status < 500);
   return (err: Error, c: any): Response | Promise<Response> => {
-    if (log === true) console.error(err);
-    else if (typeof log === "function") log(err);
-    return entryRender(c)(entry, pageProps(opts, 500));
+    const status = statusOf(err);
+    if (status >= 500) {
+      if (log === true) console.error(err);
+      else if (typeof log === "function") log(err);
+    }
+    const message = expose(err, status) && err.message ? err.message : fallback;
+    return respond(c, opts, entry, { status, message });
   };
 }
