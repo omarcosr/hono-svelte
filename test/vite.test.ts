@@ -118,7 +118,7 @@ describe("pages() plugin", () => {
         String.fromCharCode(0) + ENTRY_PREFIX + "nested/page",
       ) as string;
       expect(code).toContain("Layout0");
-      expect(code).toContain("hydrate(Layout0");
+      expect(code).toContain("mount(Layout0");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -325,6 +325,11 @@ describe("SSR CSS for server-rendered components", () => {
     const plugin = makePlugin();
     expect(load(plugin, "test/fixtures/pages/home.svelte", true)).toContain('<svelte:options css="injected" />');
     expect(load(plugin, "test/fixtures/pages/home.svelte", false)).toBeNull();
+  });
+
+  it("components imported by static pages and layouts are injected too (a layout's nav)", () => {
+    expect(load(makePlugin(), "test/fixtures/_pages/outer-layout.svelte", true)).toContain('css="injected"');
+    expect(load(makePlugin(), "test/fixtures/_pages/outer-layout.svelte", false)).toBeNull();
   });
 
   it("client pages keep the default (external CSS, linked from the client build)", () => {

@@ -374,14 +374,15 @@ function prefetchHoverScript(
 ): string {
   if (urls.length === 0) return "";
   const lt = String.fromCharCode(60);
-  const map = JSON.stringify(Object.fromEntries(urls.map((u) => [u.entry, u.url])));
+  const map = JSON.stringify(Object.fromEntries(urls.map((u) => [u.entry, u.url]))).replace(/</g, "\\u003c");
+  // Links map to entries by path: "/" -> "index", "/a" -> "a" or "a/index".
   const code =
     `(function(){var m=${map};` +
-    `function pre(u){if(document.querySelector('link[rel=\"prefetch\"][href=\"'+u+'\"]'))return;` +
+    `function pre(u){if(document.querySelector('link[rel=\"modulepreload\"][href=\"'+u+'\"]'))return;` +
     `var l=document.createElement('link');l.rel='modulepreload';l.href=u;document.head.appendChild(l);}` +
     `document.addEventListener('mouseover',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;` +
-    `if(!a)return;try{var p=new URL(a.href,location.origin).pathname.replace(/^\\//,'');` +
-    `var u=m[p];if(u)pre(u);}catch(_){}},{passive:true});})();`;
+    `if(!a)return;try{var p=new URL(a.href,location.origin).pathname.replace(/^\\/+|\\/+$/g,'');` +
+    `var u=m[p]||m[p?p+'/index':'index'];if(u)pre(u);}catch(_){}},{passive:true});})();`;
   return lt + `script${nonceAttr(nonce)}>${code}` + lt + "/script>";
 }
 
@@ -409,7 +410,7 @@ export function shell(options: ShellOptions = {}) {
   function defaultStylesHref(isProd: boolean): string {
     if (!isProd) return "/" + stylesEntry;
     const file = manifestFor(assetsOpt)?.[stylesEntry]?.file;
-    return file ? "/" + file.replace(/^\/+/, "") : "/static/styles.css";
+          return file ? "/" + file.replace(/^\/+/, "") : `${assetsBase}/styles.css`;
   }
   // Zero config: with pages() active, this module is redirected to the
   // in-memory manifest by the plugin's resolveId (enforce: "pre").
@@ -464,7 +465,9 @@ export function shell(options: ShellOptions = {}) {
     if (typeof options.nonce === "function") {
       try {
         return options.nonce(c) ?? undefined;
-      } catch {
+      } catch (err) {
+        // Without a nonce the CSP blocks every shell script — never fail silently.
+        console.error("[hono-svelte] nonce() threw — rendering without a nonce:", err);
         return undefined;
       }
     }
@@ -493,7 +496,8 @@ export function shell(options: ShellOptions = {}) {
     let headValue = typeof rendered.head === "function" ? rendered.head() : (rendered.head ?? "");
     if (layoutChain.length > 0) {
       const { createRawSnippet } = await import("svelte");
-      for (const layoutLoader of layoutChain) {
+      // The chain is outermost first; wrapping goes inside out.
+      for (const layoutLoader of [...layoutChain].reverse()) {
         const layoutMod = await layoutLoader();
         const childHtml = html;
         // The snippet MUST render a single wrapper element: the server
@@ -502,9 +506,8 @@ export function shell(options: ShellOptions = {}) {
         // breaks hydration ("Cannot set properties of null"). The extra div
         // is hydration-safe (hydrate reuses SSR DOM).
         const childSnippet = createRawSnippet(() => ({ render: () => `<div>${childHtml}</div>` }));
-        const wrapped = render(layoutMod.default as Component, {
-          ...(pageData !== undefined ? { props: pageData } : {}),
-          props: { ...pageData, children: childSnippet },
+          const wrapped = render(layoutMod.default as Component, {
+            props: { ...pageData, children: childSnippet },
           ...(nonce ? { csp: { nonce } } : {}),
           context: pageContext(page),
         }) as { html?: string; body?: string; head?: string | (() => string) };
@@ -527,10 +530,7 @@ export function shell(options: ShellOptions = {}) {
     renderer: (entryName: string, props?: RenderProps) => Response | Promise<Response>,
   ) => void;
 
-  // The context param stays `any` ON PURPOSE (see src/handlers.ts header for
-  // the full rationale: hono's unique symbols + `Context<any>` not being a
-  // supertype of concrete contexts). Everything the shell touches is typed
-  // through the casts below — no `any` leaks into the rendered response.
+
   // The context param stays `any` ON PURPOSE — validated empirically:
   // typing it (MiddlewareHandler / Context / generics) works with a single
   // hono copy and even with duplicate copies of the SAME version, but breaks
@@ -616,13 +616,16 @@ export function shell(options: ShellOptions = {}) {
             .join("");
         }
         if (isProd && options.prefetch) {
-          const known = availableEntries();
+          // Only client entries have a JS chunk; static pages are SSR-only.
+          const known = availableEntries()?.filter(
+            (e) => e !== entryName && (hasClientEntry(e) || ssrPages[e] === undefined),
+          );
           if (options.prefetch === "all" && known) {
             for (const u of prefetchUrls("all", entryName, known, resolveUrl)) {
               prefetchHtml += lt + `link rel="modulepreload" href="${escapeAttr(u)}"${nAttr} />`;
             }
           } else if (options.prefetch === "hover" && known) {
-            const others = known.filter((e) => e !== entryName && ssrPages[e] === undefined);
+            const others = known;
             prefetchHtml = prefetchHoverScript(
               nonce,
               ids.dataId,

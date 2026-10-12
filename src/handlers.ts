@@ -37,22 +37,44 @@ export type ErrorPageOptions = {
 };
 
 type EntryRenderFn = (entryName: string, props?: RenderProps) => Response | Promise<Response>;
-type JsonFn = (body: unknown, status: number) => Response;
+type JsonHeadersFn = (body: unknown, status: number, headers?: Record<string, string>) => Response;
 
 function entryRender(c: any): EntryRenderFn {
   return (c as unknown as { render: EntryRenderFn }).render;
 }
 
-function respond(c: any, opts: ErrorPageOptions, entry: string, page: ErrorPageData): Response | Promise<Response> {
+function respond(
+  c: any,
+  opts: ErrorPageOptions,
+  entry: string,
+  page: ErrorPageData,
+  headers?: Record<string, string>,
+): Response | Promise<Response> {
   if (opts.json?.(c)) {
-    return (c as unknown as { json: JsonFn }).json({ message: page.message }, page.status);
+    return (c as unknown as { json: JsonHeadersFn }).json({ message: page.message }, page.status, headers);
   }
   return entryRender(c)(entry, {
     title: opts.title,
     data: { ...page, ...opts.data },
     head: opts.head,
     status: page.status,
+    ...(headers ? { headers } : {}),
   });
+}
+
+/**
+ * Headers of the response carried by the error — hono's `HTTPException(401, { res })`
+ * (`basicAuth`, `bearerAuth`) carries `WWW-Authenticate` there. Body headers are
+ * dropped: the page/JSON replaces the body.
+ */
+function headersOf(err: Error): Record<string, string> | undefined {
+  const res = (err as { res?: unknown }).res;
+  if (!(res instanceof Response)) return undefined;
+  const out: Record<string, string> = {};
+  res.headers.forEach((value, name) => {
+    if (name !== "content-type" && name !== "content-length") out[name] = value;
+  });
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Hono `notFound` handler: `app.notFound(notFoundHandler())`. */
@@ -95,6 +117,6 @@ export function errorHandler(opts: ServerErrorHandlerOptions = {}) {
       else if (typeof log === "function") log(err);
     }
     const message = expose(err, status) && err.message ? err.message : fallback;
-    return respond(c, opts, entry, { status, message });
+    return respond(c, opts, entry, { status, message }, headersOf(err));
   };
 }
