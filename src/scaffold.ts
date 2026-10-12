@@ -10,7 +10,7 @@
 // npm still works since every script shells out to `vite` / `node`.
 
 import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 export type InitFile = { path: string; content: string; skipIfExists: boolean };
 
@@ -460,7 +460,9 @@ export function isSafeAppPath(appRoot: string, target: string): boolean {
   // so checking `startsWith(root + "/")` always failed on win32 and `init`
   // refused every file.
   const root = resolve(appRoot);
-  const abs = isAbsolute(target) ? target : resolve(root, target);
+  // resolve() also normalizes absolute targets: `/app/../evil.ts` must not
+  // pass the prefix check below as if it were inside `/app`.
+  const abs = resolve(root, target);
   const norm = (p: string) => p.replace(/\\/g, "/");
   const lower = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
   const nRoot = lower(norm(root));

@@ -148,15 +148,21 @@ describe("scaffold", () => {
     expect(checkAppLink("/nope")?.code).toBe("missing-link");
   });
 
-  it("isSafeAppPath accepts in-root files on any separator/case", () => {
+  it("isSafeAppPath keeps writes inside the app root", () => {
+    expect(isSafeAppPath(process.cwd(), "src/env.d.ts")).toBe(true);
+    expect(isSafeAppPath("/app", "/etc/passwd")).toBe(false);
+    expect(isSafeAppPath("/app", "/app/../evil.ts")).toBe(false);
+  });
+
+  // Drive-letter paths are only absolute on Windows: on POSIX `C:\\proj` is a
+  // relative segment, so these assertions only make sense there.
+  it.runIf(process.platform === "win32")("isSafeAppPath accepts in-root files on any separator/case (win32)", () => {
     // Regression: on Windows join() yields backslashes, so comparing
     // against root + "/" rejected EVERY file and `init` refused to write.
     expect(isSafeAppPath("C:\\proj", "C:\\proj\\src\\env.d.ts")).toBe(true);
     expect(isSafeAppPath("C:/proj", "C:/proj/src/pages/index.svelte")).toBe(true);
-    expect(isSafeAppPath(process.cwd(), "src/env.d.ts")).toBe(true);
+    expect(isSafeAppPath("C:\\proj", "c:\\PROJ\\src\\env.d.ts")).toBe(true);
     expect(isSafeAppPath("C:\\proj", "C:\\other\\evil.ts")).toBe(false);
-    expect(isSafeAppPath("/app", "/etc/passwd")).toBe(false);
-    expect(isSafeAppPath("/app", "/app/../evil.ts")).toBe(false);
   });
 
   it("generated package.json carries the security floors (no vulnerable ranges)", () => {

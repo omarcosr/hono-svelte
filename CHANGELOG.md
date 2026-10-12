@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **fix(scaffold): `isSafeAppPath` normalizes absolute targets.** An
+  absolute path such as `/app/../evil.ts` passed the in-root prefix check
+  on POSIX (only relative targets went through `resolve()`). Every target is
+  now resolved before the comparison.
+- **CI green on main**: the Windows-only `isSafeAppPath` assertions run only
+  on win32 (drive letters are relative segments on POSIX); the nested-layout
+  test uses its temp dir as the Vite root (it only passed on Windows because
+  tmpdir sits on another drive); the `example` job installs Bun, which its
+  build script calls.
+
 ## 0.5.1
 
 - **Scaffold hardening** (`hono-svelte init`):
