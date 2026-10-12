@@ -187,6 +187,26 @@ Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect
 > **Hydration wrapper:** each layout level wraps the page's SSR output in one `<div>` (a Svelte 5 raw-snippet requirement — an empty snippet render breaks hydration). The wrapper is hydration-safe, but it is part of the DOM: account for it in CSS selectors (e.g. `:global(> div)`).
 
 
+## Current page (`getPage`)
+
+Pages and layouts can read the request path and the Hono route pattern that rendered them — e.g. to highlight the active link in a layout nav, ignoring params:
+
+```svelte
+<!-- src/pages/dashboard/layout.svelte -->
+<script lang="ts">
+  import type { Snippet } from "svelte";
+  import { getPage } from "hono-svelte/page";
+
+  let { children }: { children: Snippet } = $props();
+  const page = getPage(); // { path: "/dashboard/users/7", route: "/dashboard/users/:id" }
+</script>
+
+<a href="/dashboard/users" aria-current={page.route.startsWith("/dashboard/users") ? "page" : undefined}>Users</a>
+{@render children()}
+```
+
+It works in server-rendered components (static pages + layouts) and in client pages: the shell passes it as Svelte context on the server and writes it on the root element for the client entry. Call it during component initialisation, like `getContext`.
+
 ## Error pages
 
 ```ts

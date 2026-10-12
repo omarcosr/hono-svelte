@@ -58,6 +58,13 @@ describe("pages() plugin", () => {
     expect(code).toContain('"/test/fixtures/pages/admin.svelte"');
   });
 
+  it("virtual entry provides the page context on mount", () => {
+    const code = makePlugin().load(String.fromCharCode(0) + ENTRY_PREFIX + "admin") as string;
+    expect(code).toContain('new Map([[Symbol.for("hono-svelte:page")');
+    expect(code).toContain('target?.getAttribute("data-hs-route")');
+    expect(code).toContain("mount(Page, { target, props, context })");
+  });
+
   it("missing entry fails with a clear error", () => {
     const plugin = makePlugin();
     expect(() => plugin.load(String.fromCharCode(0) + ENTRY_PREFIX + "missing")).toThrowError(/no page found/);
