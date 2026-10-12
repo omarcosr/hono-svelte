@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Context } from "hono";
+import { Hono, type Context } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { renderHead } from "../src/head.js";
 import {
   CACHE_IMMUTABLE,
@@ -14,6 +15,7 @@ import {
   manifestImportsFor,
 } from "../src/assets.js";
 import { errorHandler, notFoundHandler } from "../src/handlers.js";
+import { shell } from "../src/index.js";
 import {
   checkAppLink,
   doctorChecks,
@@ -143,6 +145,66 @@ describe("handlers", () => {
     expect(res.entry).toBe("oops");
     expect(res.props.status).toBe(500);
     expect(logged.length).toBe(1);
+  });
+
+  describe("status, message and JSON for API paths", () => {
+    const isApi = (c: Context) => c.req.path.startsWith("/api/");
+    const dataOf = (html: string) => JSON.parse(html.match(/<script type="application\/json" id="[^"]+">(.*?)<\/script>/)![1]);
+
+    function app(opts: Parameters<typeof errorHandler>[0] = {}) {
+      const logged: unknown[] = [];
+      const a = new Hono();
+      a.use("/*", shell({ strict: false }));
+      a.notFound(notFoundHandler({ json: isApi, message: "Página não encontrada" }));
+      a.onError(errorHandler({ json: isApi, log: (e) => logged.push(e), ...opts }));
+      for (const prefix of ["", "/api"]) {
+        a.get(`${prefix}/boom`, () => {
+          throw new Error("db password leaked");
+        });
+        a.get(`${prefix}/gone`, () => {
+          throw new HTTPException(410, { message: "Registro removido" });
+        });
+      }
+      return { app: a, logged };
+    }
+
+    it("pages get { status, message } as data and the matching status", async () => {
+      const { app: a } = app();
+      const notFound = await a.request("/nope");
+      expect(notFound.status).toBe(404);
+      expect(dataOf(await notFound.text())).toEqual({ status: 404, message: "Página não encontrada" });
+
+      const gone = await a.request("/gone");
+      expect(gone.status).toBe(410);
+      expect(dataOf(await gone.text())).toEqual({ status: 410, message: "Registro removido" });
+    });
+
+    it("5xx never expose the error message and are logged; 4xx are not logged", async () => {
+      const { app: a, logged } = app();
+      const boom = await a.request("/boom");
+      expect(boom.status).toBe(500);
+      const html = await boom.text();
+      expect(html).not.toContain("leaked");
+      expect(dataOf(html)).toEqual({ status: 500, message: "Internal Server Error" });
+      await a.request("/gone");
+      expect(logged).toHaveLength(1);
+    });
+
+    it("json() paths answer { message } JSON with the same status", async () => {
+      const { app: a } = app();
+      const notFound = await a.request("/api/nope");
+      expect(notFound.status).toBe(404);
+      expect(await notFound.json()).toEqual({ message: "Página não encontrada" });
+      const gone = await a.request("/api/gone");
+      expect([gone.status, await gone.json()]).toEqual([410, { message: "Registro removido" }]);
+      const boom = await a.request("/api/boom");
+      expect([boom.status, await boom.json()]).toEqual([500, { message: "Internal Server Error" }]);
+    });
+
+    it("message, expose and data are configurable", async () => {
+      const { app: a } = app({ message: "Erro interno", expose: () => false, data: { support: "x@y.z" } });
+      expect(dataOf(await (await a.request("/gone")).text())).toEqual({ status: 410, message: "Erro interno", support: "x@y.z" });
+    });
   });
 });
 
