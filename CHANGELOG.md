@@ -12,8 +12,12 @@
   catch-all overload accepted every entry, so a wrong `data` for a typed
   page failed its overload and silently matched the catch-all
   (`Record<string, unknown>`). The catch-all now excludes typed entries.
-  Behavior change: rendering a typed entry through a value typed as the
-  whole `Entry` union no longer compiles — narrow the entry first.
+  Behavior change: rendering through a value typed as the whole `Entry`
+  union no longer compiles once a page declares `Data`. New `UntypedEntry`
+  (pages without `Data`) and `TypedEntry` types: generic helpers take
+  `UntypedEntry`.
+- Imported types inside template literal types (`\`row-${RowId}\``) are
+  qualified too; a `//` inside an import specifier (URL) no longer cuts it.
 - New `test/types.test.ts` case runs `tsc` on a page whose `Data` imports
   an app type: correct data compiles, a wrong field type and a missing field
   fail.

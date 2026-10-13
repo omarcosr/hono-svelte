@@ -76,7 +76,8 @@ export function qualifyImports(
 /**
  * Positions where `name` is used as a type reference: a whole identifier,
  * not a property access (`.name`), not an object/interface key
- * (`{ name: …`), outside strings and comments.
+ * (`{ name: …`), outside strings and comments — but inside the `${…}`
+ * holes of template literal types (`\`row-${RowId}\``), which are types.
  */
 function findReferences(text: string, name: string): number[] {
   const found: number[] = [];
@@ -93,7 +94,31 @@ function findReferences(text: string, name: string): number[] {
       i++;
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === "`") {
+    if (ch === "`") {
+      i++;
+      while (i < text.length && text[i] !== "`") {
+        if (text[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (text[i] === "$" && text[i + 1] === "{") {
+          const start = i + 2;
+          let depth = 1;
+          let j = start;
+          while (j < text.length && depth > 0) {
+            if (text[j] === "{") depth++;
+            else if (text[j] === "}") depth--;
+            j++;
+          }
+          for (const at of findReferences(text.slice(start, j - 1), name)) found.push(start + at);
+          i = j;
+          continue;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
       i++;
       while (i < text.length && text[i] !== ch) {
         if (text[i] === "\\") i++;
@@ -177,7 +202,7 @@ function scriptImports(script: string): DataImport[] {
   const add = (imp: DataImport) => {
     if (!imports.some((other) => other.local === imp.local)) imports.push(imp);
   };
-  const code = script.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const code = script.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/gm, "$1");
   for (const m of code.matchAll(/import\s+(?:type\s+)?([\s\S]*?)\s*from\s*(["'])([^"']+)\2/g)) {
     const clause = m[1];
     const specifier = m[3];

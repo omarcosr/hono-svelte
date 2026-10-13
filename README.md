@@ -360,12 +360,16 @@ declare module "hono" {
 }
 ```
 
-Helpers that forward an entry to `c.render` use the `Entry` type exported by the package — the generated union once the `.d.ts` is in the program, `string` without it. No import of the generated file needed:
+The package exports the entry unions — the generated ones once the `.d.ts` is in the program, `string` without it. No import of the generated file needed:
+
+- `Entry`: every page.
+- `TypedEntry`: pages that declare a `Data` type (see per-page data typing below).
+- `UntypedEntry`: the others — use it in helpers that forward an entry to `c.render`; typed pages need their own `data` and are rendered directly.
 
 ```ts
-import type { Entry } from "hono-svelte";
+import type { UntypedEntry } from "hono-svelte";
 
-export const page = (entry: Entry, title: string) => (c: Context) => c.render(entry, { title });
+export const page = (entry: UntypedEntry, title: string) => (c: Context) => c.render(entry, { title });
 ```
 
 `dts: "path/to/entries.d.ts"` sets a custom path (relative to the Vite root). The file regenerates on `buildStart` and via the dev watcher when entries change. Without `dts` (default `false`), declare the renderer manually with a plain `string`:
@@ -437,9 +441,8 @@ legacy `<script context="module">`). `pages().dataTypes()` exposes the
 extracted declarations.
 
 Entries with a `Data` type only accept their own overload: `c.render(entry, …)`
-with an entry typed as the whole `Entry` union (a dynamic entry name) no
-longer compiles for typed pages — narrow the entry or render through a
-`switch`.
+with an entry typed as the whole `Entry` union no longer compiles — type
+generic helpers with `UntypedEntry`, and render typed pages directly.
 
 ## Production tips
 
