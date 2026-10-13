@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { errorHandler, shell } from "../src/index.js";
+import { isLayoutEntry, layoutChain } from "../src/layouts.js";
 import { pages } from "../src/vite.js";
 import PropsPage from "./fixtures/_pages/props.svelte";
 import Outer from "./fixtures/_pages/outer-layout.svelte";
@@ -161,6 +162,64 @@ describe("regressions", () => {
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("layoutChain is shared and outermost first", () => {
+    const all = ["layout", "a/layout", "a/b/layout", "z/layout"];
+    expect(layoutChain("a/b/c", all)).toEqual(["layout", "a/layout", "a/b/layout"]);
+    expect(layoutChain("index", all)).toEqual(["layout"]);
+    expect(layoutChain("a/layout", all)).toEqual([]);
+    expect(layoutChain("a/page", [])).toEqual([]);
+    expect(isLayoutEntry("layout") && isLayoutEntry("x/layout") && !isLayoutEntry("layouts")).toBe(true);
+  });
+
+  it("unknown entries never list the app's pages in production", async () => {
+    const app = new Hono();
+    app.use("/*", shell({ knownEntries: ["admin", "secret-admin"], isProd: true }));
+    app.get("/", (c) => c.render("nope"));
+    app.onError((err, c) => c.text(err.message, 500));
+    const text = await (await app.request("/")).text();
+    expect(text).toContain("unknown entry");
+    expect(text).not.toContain("secret-admin");
+  });
+
+  it("the manifest is walked once per entry, not once per request", async () => {
+    let reads = 0;
+    const manifest = new Proxy(
+      { "virtual:hono-svelte/entry/a": { file: "static/a-1.js", css: ["static/a-1.css"], imports: ["_s.js"] }, "_s.js": { file: "static/s-2.js" } },
+      { get: (target, key, receiver) => (reads++, Reflect.get(target, key, receiver)) },
+    );
+    const app = new Hono();
+    app.use("/*", shell({ assets: manifest as never, knownEntries: ["a"], isProd: true }));
+    app.get("/", (c) => c.render("a"));
+    const first = await (await app.request("/")).text();
+    expect(first).toContain('href="/static/a-1.css"');
+    expect(first).toContain('modulepreload" href="/static/s-2.js"');
+    const afterFirst = reads;
+    await app.request("/");
+    await app.request("/");
+    // only the global stylesheet lookup remains per request
+    expect(reads - afterFirst).toBeLessThanOrEqual(2 * 2);
+  });
+
+  it("getPage().route is the route pattern of the handler", async () => {
+    const PageInfo = (await import("./fixtures/_pages/page-info.svelte")).default;
+    const app = new Hono();
+    app.use("/*", shell({ ssrPages: manifest({ info: async () => ({ default: PageInfo }) }, { __clientEntries: [] }) }));
+    const users = new Hono().get("/:id", (c) => c.render("info"));
+    app.route("/users", users);
+    const html = await (await app.request("/users/42")).text();
+    expect(html).toContain('data-hs-route="/users/:id"');
+    expect(html).toContain('data-hs-path="/users/42"');
+  });
+
+  it("the package never imports hono at runtime (duplicate hono copies must keep working)", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    for (const file of readdirSync("src").filter((f) => f.endsWith(".ts") && f !== "scaffold.ts")) {
+      // scaffold.ts holds app templates (strings), not package imports.
+      const runtime = readFileSync(join("src", file), "utf8").match(/^import (?!type )[^;]*from "hono(\/[^"]*)?";/gm);
+      expect(runtime, file).toBeNull();
     }
   });
 });

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.2
+
+- **fix(shell): unknown-entry errors never list the app's pages in
+  production** (as documented for `knownEntries`); dev keeps the list.
+- **refactor:** the layout chain lives in one module (`src/layouts.ts`)
+  shared by the Vite plugin and the shell — the 0.6.1 nesting bug came from
+  two diverging copies. Removed dead code (`isDev`, an unused prefetch
+  parameter).
+- **perf(shell):** the Vite manifest is resolved once per shell and its
+  per-entry CSS/preload lists are cached, instead of walking the chunk graph
+  on every request.
+- **getPage().route** keeps reading the request's own `routePath`: the
+  `hono/route` helper breaks with duplicate hono copies (found by the new
+  playground e2e run). A test guards against runtime hono imports.
+- **Node 24 (LTS) supported**: `engines.node` is `>=24` (package and
+  `init` template); CI runs Node 24 and 26.
+- **CI/release:** `release.yml` publishes tags with npm trusted publishing
+  (OIDC, provenance) and creates the GitHub release from this file;
+  Dependabot for npm and actions; coverage floors raised to the measured
+  level; e2e adds `vite` dev and the playground app (sign-in, session,
+  dashboard).
+
 ## 0.6.1
 
 - **fix(shell): nested layouts nest outermost first.** With a root

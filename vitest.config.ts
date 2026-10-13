@@ -12,13 +12,14 @@ export default defineConfig({
       // cli.ts is a thin wrapper exercised through dist/cli.js subprocess
       // smoke tests (spawnSync), invisible to the in-process v8 provider.
       exclude: ["src/cli.ts"],
+      // Floors sit just under the measured coverage so it can only go up.
       // Branch threshold stays lower: the dev-watcher hooks in vite.ts need a
       // live Vite dev server to exercise.
       thresholds: {
-        statements: 85,
-        branches: 75,
-        functions: 85,
-        lines: 85,
+        statements: 90,
+        branches: 82,
+        functions: 90,
+        lines: 92,
       },
     },
   },

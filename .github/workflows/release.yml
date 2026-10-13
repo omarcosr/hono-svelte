@@ -1,0 +1,38 @@
+name: Release
+
+# Push a tag `vX.Y.Z` matching package.json to publish to npm. Uses npm
+# trusted publishing (OIDC): no NPM_TOKEN secret. One-time setup on
+# npmjs.com → hono-svelte → Settings → Trusted publishing: GitHub Actions,
+# repository omarcosr/hono-svelte, workflow release.yml.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+      - name: Tag matches package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != package.json $version"; exit 1; }
+      - run: npm install -g npm@latest
+      - run: npm install
+      # prepublishOnly runs build + tests + publint.
+      - run: npm publish --provenance --access public
+      - name: GitHub release from the CHANGELOG section
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="## $version" '$0 == v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md

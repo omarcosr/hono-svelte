@@ -5,7 +5,11 @@ test.beforeEach(({}, info) => {
   test.skip(!isHonoSvelte(info.project.name), "hono-svelte only");
 });
 
+// Production-build guarantees (hashed assets, zero JS, prefetch) don't apply to `vite` dev.
+const prodOnly = () => test.skip(test.info().project.name === "hono-svelte-dev", "production build only");
+
 test("static pages ship zero JS", async ({ page }) => {
+  prodOnly();
   const scripts: string[] = [];
   page.on("request", (r) => {
     if (r.resourceType() === "script") scripts.push(r.url());
@@ -17,6 +21,7 @@ test("static pages ship zero JS", async ({ page }) => {
 });
 
 test("hover prefetch adds one modulepreload per client page, never for static pages", async ({ page }) => {
+  prodOnly();
   await page.goto("/");
   const preloads = page.locator('link[rel="modulepreload"]');
   const before = await preloads.count();
@@ -36,6 +41,7 @@ test("errorHandler keeps WWW-Authenticate from basicAuth", async ({ request }) =
 });
 
 test("hashed assets are served immutable", async ({ page, request }) => {
+  prodOnly();
   await page.goto("/nested/client");
   const href = await page.locator('link[rel="stylesheet"]').first().getAttribute("href");
   expect(href).toMatch(/^\/static\/styles-[\w-]+\.css$/);

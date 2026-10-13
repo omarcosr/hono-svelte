@@ -9,6 +9,7 @@ import {
 } from "./assets.js";
 import { renderHead, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
+import { layoutChain } from "./layouts.js";
 import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
 import {
   allEntries as autoAllEntries,
@@ -229,6 +230,16 @@ function renderAttributes(attributes: Record<string, string>): string {
   return out;
 }
 
+/**
+ * Route pattern of the handler that rendered the page. Deliberately NOT the
+ * `hono/route` helper: it reads a module-private symbol, so with two hono
+ * copies (npm link, file: deps, monorepos) it sees no match result and
+ * throws. The request getter belongs to the request's own hono copy.
+ */
+function routeOf(c: { req: { path: string; routePath?: string } }): string {
+  return c.req.routePath || c.req.path;
+}
+
 function nonceAttr(nonce: string | undefined): string {
   return nonce ? ` nonce="${escapeAttr(nonce)}"` : "";
 }
@@ -306,19 +317,6 @@ function detectProd(): boolean {
   );
 }
 
-function isDev(): boolean {
-  try {
-    if (import.meta.env.DEV !== undefined) return import.meta.env.DEV;
-  } catch {
-    // plain node / vitest
-    return false;
-  }
-  return (
-    (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV !==
-    "production"
-  );
-}
-
 function defaultKnownEntries(ssrPages: Record<string, SsrPageLoader>): string[] | undefined {
   const keys = Object.keys(ssrPages);
   if ((ssrPages as { __allEntries?: unknown }).__allEntries !== undefined) {
@@ -327,27 +325,14 @@ function defaultKnownEntries(ssrPages: Record<string, SsrPageLoader>): string[] 
   return keys.length > 0 ? keys : undefined;
 }
 
-function renderNotFoundHint(available: string[] | undefined, _prod?: boolean): string {
-  if (!available || available.length === 0) {
+function renderNotFoundHint(available: string[] | undefined, isProd: boolean): string {
+  // Production never lists the app's pages (an app-level onError may expose the message).
+  if (isProd || !available || available.length === 0) {
     return "hono-svelte: unknown entry (check pagesDir and the entryName passed to c.render)";
   }
   const list = [...available].sort().slice(0, 20).join('", "');
   const more = available.length > 20 ? ` (+${available.length - 20} more)` : "";
   return `hono-svelte: unknown entry. Available pages: "${list}"${more}`;
-}
-
-function resolveAssetUrl(
-  assets: string | ViteManifest | AssetsResolver | undefined,
-  assetsBase: string,
-  entryName: string,
-): string {
-  const resolver: AssetsResolver =
-    typeof assets === "function"
-      ? assets
-      : typeof assets === "object" && assets !== null
-        ? createManifestAssets(assets)
-        : (entry) => `${assetsBase}/${entry}.js`;
-  return resolver(entryName);
 }
 
 function manifestFor(
@@ -369,7 +354,6 @@ function prefetchUrls(
 
 function prefetchHoverScript(
   nonce: string | undefined,
-  dataId: string,
   urls: { entry: string; url: string }[],
 ): string {
   if (urls.length === 0) return "";
@@ -396,6 +380,24 @@ export function shell(options: ShellOptions = {}) {
   const assetsBase = (options.assetsBase ?? "/static").replace(/\/$/, "");
   const assetsOpt = options.assets ?? assetsBase;
   const head = options.head ?? "";
+  // The manifest never changes for a shell instance: resolve once, cache per entry.
+  const manifest = manifestFor(assetsOpt);
+  const resolveProdUrl: AssetsResolver =
+    typeof assetsOpt === "function"
+      ? assetsOpt
+      : manifest
+        ? createManifestAssets(manifest)
+        : (entry) => `${assetsBase}/${entry}.js`;
+  const memo = <T>(fn: (entry: string) => T): ((entry: string) => T) => {
+    const cache = new Map<string, T>();
+    return (entry) => {
+      if (!cache.has(entry)) cache.set(entry, fn(entry));
+      return cache.get(entry) as T;
+    };
+  };
+  const prodUrl = memo(resolveProdUrl);
+  const cssFor = memo((entry) => (manifest ? manifestCssFor(manifest, entry) : []));
+  const importsFor = memo((entry) => (manifest ? manifestImportsFor(manifest, entry) : []));
   const defaultStatus = options.status ?? 200;
   const defaultHeaders = options.headers ?? {};
   const dataLimit = options.dataLimit ?? 102400;
@@ -409,7 +411,7 @@ export function shell(options: ShellOptions = {}) {
   const stylesEntry = (options.stylesEntry ?? "src/styles.css").replace(/^\/+/, "");
   function defaultStylesHref(isProd: boolean): string {
     if (!isProd) return "/" + stylesEntry;
-    const file = manifestFor(assetsOpt)?.[stylesEntry]?.file;
+    const file = manifest?.[stylesEntry]?.file;
           return file ? "/" + file.replace(/^\/+/, "") : `${assetsBase}/styles.css`;
   }
   // Zero config: with pages() active, this module is redirected to the
@@ -447,18 +449,8 @@ export function shell(options: ShellOptions = {}) {
     return false;
   }
 
-  function layoutChainFor(entryName: string): string[] {
-    if (entryName === "layout" || entryName.endsWith("/layout")) return [];
-    const layouts = Object.keys(ssrLayouts);
-    if (layouts.length === 0) return [];
-    const chain: string[] = [];
-    const parts = entryName.split("/");
-    for (let i = 1; i < parts.length; i++) {
-      const layout = parts.slice(0, i).join("/") + "/layout";
-      if (layouts.includes(layout)) chain.push(layout);
-    }
-    if (layouts.includes("layout")) chain.unshift("layout");
-    return chain;
+function layoutChainFor(entryName: string): string[] {
+    return layoutChain(entryName, Object.keys(ssrLayouts));
   }
 
   function resolveNonce(c: unknown): string | undefined {
@@ -560,11 +552,11 @@ export function shell(options: ShellOptions = {}) {
       if (strict && !isSsr) {
         const known = availableEntries();
         if (known && !known.includes(entryName)) {
-          throw new Error(`${renderNotFoundHint(known)} (got ${JSON.stringify(entryName)})`);
+          throw new Error(`${renderNotFoundHint(known, options.isProd ?? detectProd())} (got ${JSON.stringify(entryName)})`);
         }
       }
       const ids = getIds(entryName);
-      const page: PageInfo = { path: c.req.path, route: c.req.routePath ?? c.req.path };
+      const page: PageInfo = { path: c.req.path, route: routeOf(c) };
       const isProd = options.isProd ?? detectProd();
       const nonce = resolveNonce(c);
       const nAttr = nonceAttr(nonce);
@@ -593,7 +585,7 @@ export function shell(options: ShellOptions = {}) {
       }
 
       const resolveUrl = (entry: string): string =>
-        isProd ? resolveAssetUrl(assetsOpt, assetsBase, entry) : devEntryUrl(entry);
+        isProd ? prodUrl(entry) : devEntryUrl(entry);
 
       let scriptHtml = "";
       let preloadHtml = "";
@@ -603,11 +595,10 @@ export function shell(options: ShellOptions = {}) {
         scriptHtml =
           lt + `script type="module" src="${escapeAttr(src)}"${nAttr}>` + lt + "/script>";
         const shouldPreload = options.preload ?? isProd;
-        const manifest = isProd ? manifestFor(assetsOpt) : undefined;
         if (shouldPreload) {
           const urls = [src];
-          if (manifest) {
-            for (const imp of manifestImportsFor(manifest, entryName)) {
+          if (isProd) {
+            for (const imp of importsFor(entryName)) {
               if (!urls.includes(imp)) urls.push(imp);
             }
           }
@@ -628,7 +619,6 @@ export function shell(options: ShellOptions = {}) {
             const others = known;
             prefetchHtml = prefetchHoverScript(
               nonce,
-              ids.dataId,
               others.map((e) => ({ entry: e, url: resolveUrl(e) })),
             );
           }
@@ -638,9 +628,8 @@ export function shell(options: ShellOptions = {}) {
       const status = props?.status ?? defaultStatus;
       const headers = { ...defaultHeaders, ...props?.headers };
       const pageHead = props?.head !== undefined ? renderHead(props.head) : "";
-      const manifestNow = isProd ? manifestFor(assetsOpt) : undefined;
       const cssLinks =
-        (manifestNow ? manifestCssFor(manifestNow, entryName) : [])
+        (isProd ? cssFor(entryName) : [])
           .map((href) => lt + `link rel="stylesheet" href="${escapeAttr(href)}"${nAttr} />`)
           .join("") +
         extraStyles
