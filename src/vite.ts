@@ -1,6 +1,7 @@
 import { existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getIds } from "./ids.js";
+import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { extractPageDataType } from "./page-data.js";
 import {
   ENTRY_PREFIX,
@@ -140,17 +141,8 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     return layouts.sort((a, b) => a.entryName.localeCompare(b.entryName));
   }
 
-  function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
-    if (entryName.endsWith("/layout") || entryName === "layout") return [];
-    const chain: string[] = [];
-    const parts = entryName.split("/");
-    for (let i = 1; i < parts.length; i++) {
-      const dir = parts.slice(0, i).join("/");
-      const layout = (dir ? dir + "/" : "") + "layout";
-      if (layouts.some((l) => l.entryName === layout)) chain.push(layout);
-    }
-    if (layouts.some((l) => l.entryName === "layout")) chain.unshift("layout");
-    return chain;
+function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
+    return layoutChain(entryName, layouts.map((l) => l.entryName));
   }
 
   function computePages(): PageSpec[] {
@@ -163,7 +155,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     const result: PageSpec[] = [];
     for (const file of files) {
       const entryName = entryNameFromFile(file);
-      if (entryName === "layout" || entryName.endsWith("/layout")) continue;
+      if (isLayoutEntry(entryName)) continue;
       if (seen.has(entryName)) {
         throw new Error(`hono-svelte: duplicate entry: ${entryName}`);
       }

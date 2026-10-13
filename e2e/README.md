@@ -6,7 +6,9 @@ The same browser suite runs against three targets — Playwright projects:
 | --- | --- | --- |
 | `hono-svelte-node` | `hono-app` (hono-svelte, `vite build`) | Node |
 | `hono-svelte-bun` | same build | Bun |
+| `hono-svelte-dev` | `hono-app` through `vite` (@hono/vite-dev-server) | Node |
 | `sveltekit` | `kit-app` (SvelteKit + adapter-node) | Node |
+| `playground` | `examples/playground` (own spec: sign-in, session, dashboard) | Bun |
 
 `kit-app` is the **reference**: it implements the same pages/layouts with
 SvelteKit. A contract test (`tests/contract.spec.ts`) must pass on every

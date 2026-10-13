@@ -446,6 +446,7 @@ cd examples/playground && bun install && bun run build
 - `npm test` — unit + integration suite (vitest, real `vite build --ssr` included), with coverage thresholds.
 - `npm run test:e2e` — Playwright contract suite in [`e2e/`](./e2e/README.md): the same browser tests run against hono-svelte on Node, on Bun, and against an equivalent SvelteKit app used as the reference implementation (layout nesting, `<title>` precedence, scoped CSS, interactivity, console errors, broken assets).
 - CI also runs the suite against the minimum and the latest peer versions (`hono`, `svelte`, `vite`).
+- Releases: push a `vX.Y.Z` tag matching `package.json`; `.github/workflows/release.yml` publishes to npm with provenance (trusted publishing) and creates the GitHub release.
 
 ## License
 

@@ -92,7 +92,7 @@ const PACKAGE_JSON = `{
   "private": true,
   "engines": {
     "bun": ">=1.4",
-    "node": ">=26"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "vite",
@@ -112,7 +112,7 @@ const PACKAGE_JSON = `{
     "@hono/vite-build": "^1",
     "@hono/vite-dev-server": "^0",
     "@sveltejs/vite-plugin-svelte": "^7",
-    "@types/node": "^26",
+    "@types/node": "^24",
     "typescript": "^7",
     "vite": "^8.3.0"
   }

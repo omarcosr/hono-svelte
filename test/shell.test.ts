@@ -199,7 +199,7 @@ describe("shell", () => {
 
   it("unknown entry lists available pages", async () => {
     const app = new Hono();
-    app.use("/*", shell({ knownEntries: ["admin", "home"] }));
+    app.use("/*", shell({ knownEntries: ["admin", "home"], isProd: false }));
     app.get("/x", (c) => c.render("nope"));
     app.onError((err, c) => c.text((err as Error).message, 500));
     const res = await app.request("/x");

@@ -5,11 +5,13 @@
   "scripts": {
     "build:hono": "cd hono-app && vite build --mode client && vite build --mode server",
     "build:kit": "cd kit-app && vite build",
-    "build": "npm run build:hono && npm run build:kit",
+    "build": "npm run build:hono && npm run build:kit && npm run build:playground",
     "start:hono:node": "node hono-app/dist/server/server.mjs",
     "start:hono:bun": "bun hono-app/dist/server/server.mjs",
     "start:kit": "node kit-app/build/index.js",
-    "test": "playwright test"
+    "test": "playwright test",
+    "dev:hono": "cd hono-app && vite",
+    "build:playground": "cd ../examples/playground && npm install --no-package-lock --no-fund --no-audit && npm run build"
   },
   "dependencies": {
     "hono": "^4.13.8",
@@ -22,6 +24,7 @@
     "@sveltejs/adapter-node": "^6.0.0",
     "@sveltejs/kit": "^3.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "@hono/vite-dev-server": "^0.26.1"
   }
 }
