@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 - **feat(vite): per-page `Data` can use imported types.** The generated dts
   rewrites references to types imported in the page's `<script module>` as
