@@ -1,6 +1,8 @@
 // Per-page <head> tags (CSP-safe: meta/link tags plus an opt-in raw slot).
 // No executable inline scripts are ever emitted here.
 
+import { escapeAttr } from "./escape.js";
+
 export type HeadMetaItem = {
   name?: string;
   property?: string;
@@ -20,10 +22,6 @@ export type HeadProps = {
   /** Raw HTML appended as-is (fonts, ld+json, verification tags). */
   extra?: string;
 };
-
-function escapeAttr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-}
 
 export function renderHead(head: string | HeadProps | undefined): string {
   if (!head) return "";

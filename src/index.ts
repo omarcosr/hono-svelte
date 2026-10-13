@@ -7,6 +7,7 @@ import {
   type AssetsResolver,
   type ViteManifest,
 } from "./assets.js";
+import { escapeAttr } from "./escape.js";
 import { renderHead, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
 import { layoutChain } from "./layouts.js";
@@ -181,10 +182,6 @@ export type ShellContext = {
   render: (entryName: string, props?: RenderProps) => Response | Promise<Response>;
 };
 
-function escapeAttr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-}
-
 function isValidEntryName(entryName: string): boolean {
   if (!entryName || entryName.length > 200) return false;
   if (entryName.startsWith("/") || entryName.startsWith(".")) return false;
@@ -213,7 +210,8 @@ function resolveHeadConflicts(input: {
   pageHead: string;
 }): { title: string; shellHead: string; ssrHead: string } {
   let { shellHead, ssrHead } = input;
-  const pageHasTitle = new RegExp(TITLE_TAG.source, "i").test(ssrHead);
+  // search() ignores the global flag's lastIndex, unlike test().
+  const pageHasTitle = ssrHead.search(TITLE_TAG) >= 0;
   let title = "";
   if (input.explicitTitle !== undefined) {
     title = `<title>${escapeAttr(input.explicitTitle)}</title>`;
@@ -221,7 +219,7 @@ function resolveHeadConflicts(input: {
   } else if (!pageHasTitle) {
     title = `<title>${escapeAttr(input.shellTitle)}</title>`;
   }
-  if (new RegExp(DESCRIPTION_META.source, "i").test(ssrHead + input.pageHead)) {
+  if ((ssrHead + input.pageHead).search(DESCRIPTION_META) >= 0) {
     shellHead = shellHead.replace(DESCRIPTION_META, "");
   }
   return { title, shellHead, ssrHead };
@@ -250,6 +248,9 @@ function routeOf(c: { req: { path: string; routePath?: string } }): string {
   return c.req.routePath || c.req.path;
 }
 
+/** `<` built at runtime, as everywhere the shell emits markup from strings. */
+const LT = String.fromCharCode(60);
+
 function nonceAttr(nonce: string | undefined): string {
   return nonce ? ` nonce="${escapeAttr(nonce)}"` : "";
 }
@@ -270,18 +271,15 @@ function serializePageData(
   if (json === undefined) return { json: "", html: "" };
   checkDataLimit(entryName, json, dataLimit);
   const safe = json.replace(/</g, "\\u003c");
-  const lt = String.fromCharCode(60);
-  return {
-    json,
-    html: lt + 'script type="application/json" id="' + dataId + '">' + safe + lt + "/script>",
-  };
+  return { json, html: `${LT}script type="application/json" id="${dataId}">${safe}${LT}/script>` };
 }
 
 const warnedDataLimit = new Set<string>();
+const utf8 = new TextEncoder();
 
 function checkDataLimit(entryName: string, json: string, dataLimit: number | false): void {
   if (dataLimit === false) return;
-  const bytes = new TextEncoder().encode(json).length;
+  const bytes = utf8.encode(json).length;
   if (bytes <= dataLimit) return;
   // One warning per (page, limit): a second page over the limit must still
   // be reported (the key used to be just the limit — one warn per process).
@@ -300,8 +298,6 @@ function checkDataLimit(entryName: string, json: string, dataLimit: number | fal
 export function __resetDataLimitWarned(): void {
   warnedDataLimit.clear();
 }
-
-type EnvProbe = { env?: { PROD?: boolean; DEV?: boolean } };
 
 /**
  * Build-time flags. `import.meta.env.PROD/DEV` MUST be accessed statically
@@ -351,187 +347,237 @@ function manifestFor(
   return typeof assets === "object" && assets !== null ? (assets as ViteManifest) : undefined;
 }
 
-function prefetchUrls(
-  mode: PrefetchMode,
-  entryName: string,
-  allEntries: string[] | undefined,
-  resolveUrl: (entry: string) => string,
-): string[] {
-  if (!mode || !allEntries) return [];
-  if (mode === "all") return allEntries.filter((e) => e !== entryName).map(resolveUrl);
-  return [];
+function linkTags(rel: "stylesheet" | "modulepreload", hrefs: Iterable<string>, nAttr: string): string {
+  let out = "";
+  for (const href of hrefs) out += `${LT}link rel="${rel}" href="${escapeAttr(href)}"${nAttr} />`;
+  return out;
 }
 
-function prefetchHoverScript(
-  nonce: string | undefined,
-  urls: { entry: string; url: string }[],
-): string {
-  if (urls.length === 0) return "";
-  const lt = String.fromCharCode(60);
-  const map = JSON.stringify(Object.fromEntries(urls.map((u) => [u.entry, u.url]))).replace(/</g, "\\u003c");
+type PrefetchTarget = { entry: string; url: string };
+
+function prefetchHoverScript(nonce: string | undefined, targets: PrefetchTarget[]): string {
+  if (targets.length === 0) return "";
+  const map = JSON.stringify(Object.fromEntries(targets.map((t) => [t.entry, t.url]))).replace(/</g, "\\u003c");
   // Links map to entries by path: "/" -> "index", "/a" -> "a" or "a/index".
   const code =
     `(function(){var m=${map};` +
-    `function pre(u){if(document.querySelector('link[rel=\"modulepreload\"][href=\"'+u+'\"]'))return;` +
+    `function pre(u){if(document.querySelector('link[rel=\\"modulepreload\\"][href=\\"'+u+'\\"]'))return;` +
     `var l=document.createElement('link');l.rel='modulepreload';l.href=u;document.head.appendChild(l);}` +
     `document.addEventListener('mouseover',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;` +
     `if(!a)return;try{var p=new URL(a.href,location.origin).pathname.replace(/^\\/+|\\/+$/g,'');` +
     `var u=m[p]||m[p?p+'/index':'index'];if(u)pre(u);}catch(_){}},{passive:true});})();`;
-  return lt + `script${nonceAttr(nonce)}>${code}` + lt + "/script>";
+  return `${LT}script${nonceAttr(nonce)}>${code}${LT}/script>`;
 }
+
+/** Caches a per-entry computation (the inputs never change for a shell instance). */
+function memoByEntry<T>(fn: (entry: string) => T): (entry: string) => T {
+  const cache = new Map<string, T>();
+  return (entry) => {
+    if (!cache.has(entry)) cache.set(entry, fn(entry));
+    return cache.get(entry) as T;
+  };
+}
+
+type Rendered = { html?: string; body?: string; head?: string | (() => string) };
+const bodyOf = (r: Rendered): string => r.html ?? r.body ?? "";
+const headOf = (r: Rendered): string => (typeof r.head === "function" ? r.head() : (r.head ?? ""));
+
+/**
+ * Server-renders a static page inside its layout chain (outermost first).
+ * The page and every layout module load in parallel.
+ */
+async function renderSsrBody(
+  loader: SsrPageLoader,
+  layouts: SsrPageLoader[],
+  data: Record<string, unknown> | undefined,
+  nonce: string | undefined,
+  page: PageInfo,
+): Promise<{ html: string; head: string }> {
+  const [{ render }, { createRawSnippet }, pageMod, ...layoutMods] = await Promise.all([
+    import("svelte/server"),
+    import("svelte"),
+    loader(),
+    ...layouts.map((load) => load()),
+  ]);
+  const renderWith = (component: unknown, props: Record<string, unknown> | undefined): Rendered =>
+    render(component as Component, {
+      ...(props !== undefined ? { props } : {}),
+      ...(nonce ? { csp: { nonce } } : {}),
+      context: pageContext(page),
+    }) as Rendered;
+  const rendered = renderWith(pageMod.default, data);
+  let html = bodyOf(rendered);
+  let head = headOf(rendered);
+  // Wrapping goes inside out. The snippet MUST render a single wrapper
+  // element: the client createRawSnippet takes get_first_child(fragment),
+  // and an empty render breaks it ("Cannot set properties of null").
+  for (const layoutMod of layoutMods.reverse()) {
+    const childHtml = html;
+    const children = createRawSnippet(() => ({ render: () => `<div>${childHtml}</div>` }));
+    const wrapped = renderWith(layoutMod.default, { ...data, children });
+    html = bodyOf(wrapped);
+    head = headOf(wrapped) + head;
+  }
+  return { html, head };
+}
+
+/** The virtual manifest's metadata, carried as properties of the `ssrPages` map. */
+type ManifestMeta = {
+  __layouts?: Record<string, SsrPageLoader>;
+  __clientEntries?: string[];
+  __allEntries?: string[];
+};
+const metaOf = (pages: Record<string, SsrPageLoader>): ManifestMeta => pages as ManifestMeta;
+
+/**
+ * hono's built-in `Renderer` type covers only the default string renderer;
+ * apps get the typed one via the generated dts (`declare module "hono"`).
+ */
+type SetEntryRenderer = (
+  renderer: (entryName: string, props?: RenderProps) => Response | Promise<Response>,
+) => void;
 
 export function shell(options: ShellOptions = {}) {
   const titleDefault = options.title ?? "App";
   const lang = options.lang ?? "en";
-  const htmlAttributes = (c: unknown): string => {
-    const attrs = typeof options.htmlAttributes === "function" ? options.htmlAttributes(c) : options.htmlAttributes;
-    return attrs ? renderAttributes(attrs) : "";
-  };
   const assetsBase = (options.assetsBase ?? "/static").replace(/\/$/, "");
   const assetsOpt = options.assets ?? assetsBase;
   const head = options.head ?? "";
-  // The manifest never changes for a shell instance: resolve once, cache per entry.
-  const manifest = manifestFor(assetsOpt);
-  const resolveProdUrl: AssetsResolver =
-    typeof assetsOpt === "function"
-      ? assetsOpt
-      : manifest
-        ? createManifestAssets(manifest)
-        : (entry) => `${assetsBase}/${entry}.js`;
-  const memo = <T>(fn: (entry: string) => T): ((entry: string) => T) => {
-    const cache = new Map<string, T>();
-    return (entry) => {
-      if (!cache.has(entry)) cache.set(entry, fn(entry));
-      return cache.get(entry) as T;
-    };
-  };
-  const prodUrl = memo(resolveProdUrl);
-  const cssFor = memo((entry) => (manifest ? manifestCssFor(manifest, entry) : []));
-  const importsFor = memo((entry) => (manifest ? manifestImportsFor(manifest, entry) : []));
   const defaultStatus = options.status ?? 200;
   const defaultHeaders = options.headers ?? {};
   const dataLimit = options.dataLimit ?? 102400;
   const strict = options.strict ?? true;
   const ssrFallback = options.ssrFallback ?? false;
   const extraStyles = options.styles ?? [];
-  const resolveStyles =
-    typeof options.stylesHref === "function"
-      ? options.stylesHref
-      : () => options.stylesHref as string | undefined;
   const stylesEntry = (options.stylesEntry ?? "src/styles.css").replace(/^\/+/, "");
-  function defaultStylesHref(isProd: boolean): string {
+
+  // The manifest never changes for a shell instance: resolve once, cache per entry.
+  const manifest = manifestFor(assetsOpt);
+  const prodUrl = memoByEntry(
+    typeof assetsOpt === "function"
+      ? assetsOpt
+      : manifest
+        ? createManifestAssets(manifest)
+        : (entry) => `${assetsBase}/${entry}.js`,
+  );
+  const cssFor = memoByEntry((entry) => (manifest ? manifestCssFor(manifest, entry) : []));
+  const importsFor = memoByEntry((entry) => (manifest ? manifestImportsFor(manifest, entry) : []));
+
+  // Zero config: with pages() active, this module is redirected to the
+  // in-memory manifest by the plugin's resolveId (enforce: "pre"). The
+  // layouts map must come from the VIRTUAL manifest (the stub's is always {});
+  // a manual ssrPages map carries its own metadata on the same object.
+  const ssrPages = options.ssrPages ?? autoSsrPages;
+  const ssrLayouts: Record<string, SsrPageLoader> =
+    metaOf(ssrPages).__layouts ?? metaOf(autoSsrPages).__layouts ?? (autoSsrLayouts as Record<string, SsrPageLoader>);
+  // Client entries have a JS bundle; static pages (no <script>) are server-rendered.
+  const clientEntries = new Set(metaOf(ssrPages).__clientEntries ?? metaOf(autoSsrPages).__clientEntries ?? []);
+  const known =
+    options.knownEntries ?? (autoAllEntries.length > 0 ? [...autoAllEntries] : undefined) ?? defaultKnownEntries(ssrPages);
+  const knownSet = known ? new Set(known) : undefined;
+  const isSsrEntry = (entry: string): boolean => ssrPages[entry] !== undefined && !clientEntries.has(entry);
+  const layoutLoaders = memoByEntry((entry) =>
+    layoutChain(entry, Object.keys(ssrLayouts)).flatMap((name) => ssrLayouts[name] ?? []),
+  );
+  // Prefetch targets: other entries that have a JS chunk.
+  const prefetchTargets = memoByEntry((entry): PrefetchTarget[] =>
+    (known ?? []).filter((e) => e !== entry && !isSsrEntry(e)).map((e) => ({ entry: e, url: prodUrl(e) })),
+  );
+
+  const htmlAttributes = (c: unknown): string => {
+    const attrs = typeof options.htmlAttributes === "function" ? options.htmlAttributes(c) : options.htmlAttributes;
+    return attrs ? renderAttributes(attrs) : "";
+  };
+
+  function stylesHrefFor(isProd: boolean): string {
+    const custom = typeof options.stylesHref === "function" ? options.stylesHref(isProd) : options.stylesHref;
+    if (custom !== undefined) return custom;
     if (!isProd) return "/" + stylesEntry;
     const file = manifest?.[stylesEntry]?.file;
-          return file ? "/" + file.replace(/^\/+/, "") : `${assetsBase}/styles.css`;
-  }
-  // Zero config: with pages() active, this module is redirected to the
-  // in-memory manifest by the plugin's resolveId (enforce: "pre").
-  const ssrPages = options.ssrPages ?? autoSsrPages;
-  // NOTE: `p` in the bundle below is the layouts map. It must come from the
-  // VIRTUAL manifest (ssrPages.__layouts), never from the stub — the stub's
-  // ssrLayouts is always {}. When the caller passes a manual ssrPages map,
-  // __layouts travels on the same object (see vite.ts manifestSource).
-  const ssrLayouts: Record<string, SsrPageLoader> =
-    (ssrPages as unknown as { __layouts?: Record<string, SsrPageLoader> }).__layouts ??
-    (autoSsrPages as unknown as { __layouts?: Record<string, SsrPageLoader> }).__layouts ??
-    (autoSsrLayouts as Record<string, SsrPageLoader>);
-  const staticKnown =
-    options.knownEntries ??
-    (autoAllEntries.length > 0 ? [...autoAllEntries] : undefined) ??
-    defaultKnownEntries(ssrPages);
-
-  function availableEntries(): string[] | undefined {
-    if (staticKnown) return staticKnown;
-    return defaultKnownEntries(ssrPages);
-  }
-
-  /**
-   * Client entries have a JS bundle (input() in the plugin). The virtual
-   * manifest carries them via `clientEntries`; the static stub has none.
-   * Layout-wrapped STATIC pages are SSR (no script branch) — their chain
-   * is rendered server-side.
-   */
-  function hasClientEntry(entryName: string): boolean {
-    const fromManifest = (ssrPages as unknown as { __clientEntries?: string[] }).__clientEntries;
-    if (fromManifest) return fromManifest.includes(entryName);
-    const auto = (autoSsrPages as unknown as { __clientEntries?: string[] }).__clientEntries;
-    if (auto) return auto.includes(entryName);
-    return false;
-  }
-
-function layoutChainFor(entryName: string): string[] {
-    return layoutChain(entryName, Object.keys(ssrLayouts));
+    return file ? "/" + file.replace(/^\/+/, "") : `${assetsBase}/styles.css`;
   }
 
   function resolveNonce(c: unknown): string | undefined {
-    if (typeof options.nonce === "function") {
+    if (typeof options.nonce !== "function") return options.nonce;
+    try {
+      return options.nonce(c) ?? undefined;
+    } catch (err) {
+      // Without a nonce the CSP blocks every shell script — never fail silently.
+      console.error("[hono-svelte] nonce() threw — rendering without a nonce:", err);
+      return undefined;
+    }
+  }
+
+  /** Module script, preloads and prefetch for an entry rendered on the client. */
+  function clientAssets(entryName: string, isProd: boolean, nonce: string | undefined): string {
+    const nAttr = nonceAttr(nonce);
+    const src = isProd ? prodUrl(entryName) : devEntryUrl(entryName);
+    let out = "";
+    if (options.preload ?? isProd) {
+      out += linkTags("modulepreload", new Set([src, ...(isProd ? importsFor(entryName) : [])]), nAttr);
+    }
+    if (isProd && options.prefetch === "all") {
+      out += linkTags("modulepreload", prefetchTargets(entryName).map((t) => t.url), nAttr);
+    } else if (isProd && options.prefetch === "hover") {
+      out += prefetchHoverScript(nonce, prefetchTargets(entryName));
+    }
+    return out + `${LT}script type="module" src="${escapeAttr(src)}"${nAttr}>${LT}/script>`;
+  }
+
+  async function renderEntry(c: any, entryName: string, props: RenderProps | undefined): Promise<Response> {
+    if (!isValidEntryName(entryName)) {
+      throw new Error(`hono-svelte: invalid entryName: ${JSON.stringify(entryName)}`);
+    }
+    const isProd = options.isProd ?? detectProd();
+    let isSsr = isSsrEntry(entryName);
+    if (strict && !isSsr && knownSet && !knownSet.has(entryName)) {
+      throw new Error(`${renderNotFoundHint(known, isProd)} (got ${JSON.stringify(entryName)})`);
+    }
+    const ids = getIds(entryName);
+    const page: PageInfo = { path: c.req.path, route: routeOf(c) };
+    const nonce = resolveNonce(c);
+    const nAttr = nonceAttr(nonce);
+    const { html: dataHtml } = serializePageData(entryName, props?.data, ids.dataId, dataLimit);
+
+    let bodyHtml = "";
+    let ssrHead = "";
+    if (isSsr) {
       try {
-        return options.nonce(c) ?? undefined;
+        const loader = ssrPages[entryName] as SsrPageLoader;
+        ({ html: bodyHtml, head: ssrHead } = await renderSsrBody(loader, layoutLoaders(entryName), props?.data, nonce, page));
       } catch (err) {
-        // Without a nonce the CSP blocks every shell script — never fail silently.
-        console.error("[hono-svelte] nonce() threw — rendering without a nonce:", err);
-        return undefined;
+        if (!ssrFallback) throw err;
+        console.error(`[hono-svelte] SSR failed for "${entryName}" — falling back to client rendering:`, err);
+        isSsr = false;
       }
     }
-    return options.nonce;
+
+    const pageHead = props?.head !== undefined ? renderHead(props.head) : "";
+    const resolvedHead = resolveHeadConflicts({
+      shellTitle: titleDefault,
+      explicitTitle: props?.title,
+      shellHead: head,
+      ssrHead,
+      pageHead,
+    });
+    const stylesheets = [stylesHrefFor(isProd), ...(isProd ? cssFor(entryName) : []), ...extraStyles];
+
+    return c.html(
+      `<!doctype html><html lang="${escapeAttr(lang)}"${htmlAttributes(c)}><head>${resolvedHead.title}` +
+        `<meta charset="utf-8" /><meta content="width=device-width, initial-scale=1" name="viewport" />` +
+        resolvedHead.shellHead +
+        linkTags("stylesheet", stylesheets, nAttr) +
+        resolvedHead.ssrHead +
+        pageHead +
+        (isSsr ? "" : clientAssets(entryName, isProd, nonce)) +
+        `</head>` +
+        `<body><div id="${ids.rootId}" ${PAGE_ATTRIBUTES.path}="${escapeAttr(page.path)}" ${PAGE_ATTRIBUTES.route}="${escapeAttr(page.route)}">${bodyHtml}</div>` +
+        dataHtml +
+        `</body></html>`,
+      props?.status ?? defaultStatus,
+      { ...defaultHeaders, ...props?.headers },
+    );
   }
-
-  async function renderSsrBody(
-    loader: SsrPageLoader,
-    pageData: Record<string, unknown> | undefined,
-    nonce: string | undefined,
-    layoutChain: SsrPageLoader[],
-    page: PageInfo,
-  ): Promise<{ html: string; head: string }> {
-    const mod = await loader();
-    const { render } = await import("svelte/server");
-    const renderOpts: Record<string, unknown> = {};
-    if (pageData !== undefined) renderOpts.props = pageData;
-    if (nonce) renderOpts.csp = { nonce };
-    renderOpts.context = pageContext(page);
-    const rendered = render(mod.default as Component, renderOpts) as {
-      html?: string;
-      body?: string;
-      head?: string | (() => string);
-    };
-    let html = rendered.html ?? rendered.body ?? "";
-    let headValue = typeof rendered.head === "function" ? rendered.head() : (rendered.head ?? "");
-    if (layoutChain.length > 0) {
-      const { createRawSnippet } = await import("svelte");
-      // The chain is outermost first; wrapping goes inside out.
-      for (const layoutLoader of [...layoutChain].reverse()) {
-        const layoutMod = await layoutLoader();
-        const childHtml = html;
-        // The snippet MUST render a single wrapper element: the server
-        // renderer pushes render() output verbatim, and the client
-        // createRawSnippet takes get_first_child(fragment). An empty render
-        // breaks hydration ("Cannot set properties of null"). The extra div
-        // is hydration-safe (hydrate reuses SSR DOM).
-        const childSnippet = createRawSnippet(() => ({ render: () => `<div>${childHtml}</div>` }));
-          const wrapped = render(layoutMod.default as Component, {
-            props: { ...pageData, children: childSnippet },
-          ...(nonce ? { csp: { nonce } } : {}),
-          context: pageContext(page),
-        }) as { html?: string; body?: string; head?: string | (() => string) };
-        html = wrapped.html ?? wrapped.body ?? "";
-        const layoutHead =
-          typeof wrapped.head === "function" ? wrapped.head() : (wrapped.head ?? "");
-        headValue = layoutHead + headValue;
-      }
-    }
-    return { html, head: headValue };
-  }
-
-  /**
-   * hono's built-in `Renderer` type covers only the default string renderer;
-   * apps get the typed one via the generated dts (`declare module "hono"`).
-   * The narrow cast at this boundary keeps the middleware signature `any`-free
-   * (calling through the cast object preserves `this`).
-   */
-  type SetEntryRenderer = (
-    renderer: (entryName: string, props?: RenderProps) => Response | Promise<Response>,
-  ) => void;
-
 
   // The context param stays `any` ON PURPOSE — validated empirically:
   // typing it (MiddlewareHandler / Context / generics) works with a single
@@ -540,147 +586,12 @@ function layoutChainFor(entryName: string): string[] {
   // than the one this package's d.ts resolves to (file:/npm-link/monorepo
   // topologies — e.g. app hono 4.13.7 vs package types 4.13.8 fail with
   // `[GET_MATCH_RESULT]`-symbol mismatches). A d.ts free of hono type
-  // references is immune to any copy/version layout. The
-  // render/setRenderer boundary needs casts regardless (hono's default
-  // Renderer only accepts string content), so `any` here costs no real
-  // type safety — the casts carry the correctness burden.
-  const inner = async (c: any, next: Next): Promise<void> => {
-    (c as unknown as { setRenderer: SetEntryRenderer }).setRenderer(
-      async (entryName: string, props?: RenderProps) => {
-      if (!isValidEntryName(entryName)) {
-        throw new Error(`hono-svelte: invalid entryName: ${JSON.stringify(entryName)}`);
-      }
-      const loader: SsrPageLoader | undefined = ssrPages[entryName];
-      // A page is SSR when it is static (no <script>) — LAYOUTS DON'T MATTER
-      // here. A static page wrapped in layouts SSRs the page and wraps it in
-      // the layout chain (same rule as pages().staticEntries/clientEntries).
-      // Client entries (has <script>) always go the script branch.
-      const chain = layoutChainFor(entryName)
-        .map((l) => ssrLayouts[l])
-        .filter((l): l is SsrPageLoader => l !== undefined);
-      let isSsr = loader !== undefined && !hasClientEntry(entryName);
-      if (strict && !isSsr) {
-        const known = availableEntries();
-        if (known && !known.includes(entryName)) {
-          throw new Error(`${renderNotFoundHint(known, options.isProd ?? detectProd())} (got ${JSON.stringify(entryName)})`);
-        }
-      }
-      const ids = getIds(entryName);
-      const page: PageInfo = { path: c.req.path, route: routeOf(c) };
-      const isProd = options.isProd ?? detectProd();
-      const nonce = resolveNonce(c);
-      const nAttr = nonceAttr(nonce);
-      const stylesHref =
-        resolveStyles(isProd) ?? defaultStylesHref(isProd);
-      const { html: dataHtml } = serializePageData(entryName, props?.data, ids.dataId, dataLimit);
-      const lt = String.fromCharCode(60);
-
-      let bodyHtml = "";
-      let ssrHead = "";
-      if (isSsr) {
-        try {
-          const rendered = await renderSsrBody(loader as SsrPageLoader, props?.data, nonce, chain, page);
-          bodyHtml = rendered.html;
-          ssrHead = rendered.head;
-        } catch (err) {
-          if (!ssrFallback) throw err;
-          console.error(
-            `[hono-svelte] SSR failed for "${entryName}" — falling back to client rendering:`,
-            err,
-          );
-          bodyHtml = "";
-          ssrHead = "";
-          isSsr = false;
-        }
-      }
-
-      const resolveUrl = (entry: string): string =>
-        isProd ? prodUrl(entry) : devEntryUrl(entry);
-
-      let scriptHtml = "";
-      let preloadHtml = "";
-      let prefetchHtml = "";
-      if (!isSsr) {
-        const src = resolveUrl(entryName);
-        scriptHtml =
-          lt + `script type="module" src="${escapeAttr(src)}"${nAttr}>` + lt + "/script>";
-        const shouldPreload = options.preload ?? isProd;
-        if (shouldPreload) {
-          const urls = [src];
-          if (isProd) {
-            for (const imp of importsFor(entryName)) {
-              if (!urls.includes(imp)) urls.push(imp);
-            }
-          }
-          preloadHtml = urls
-            .map((u) => lt + `link rel="modulepreload" href="${escapeAttr(u)}"${nAttr} />`)
-            .join("");
-        }
-        if (isProd && options.prefetch) {
-          // Only client entries have a JS chunk; static pages are SSR-only.
-          const known = availableEntries()?.filter(
-            (e) => e !== entryName && (hasClientEntry(e) || ssrPages[e] === undefined),
-          );
-          if (options.prefetch === "all" && known) {
-            for (const u of prefetchUrls("all", entryName, known, resolveUrl)) {
-              prefetchHtml += lt + `link rel="modulepreload" href="${escapeAttr(u)}"${nAttr} />`;
-            }
-          } else if (options.prefetch === "hover" && known) {
-            const others = known;
-            prefetchHtml = prefetchHoverScript(
-              nonce,
-              others.map((e) => ({ entry: e, url: resolveUrl(e) })),
-            );
-          }
-        }
-      }
-
-      const status = props?.status ?? defaultStatus;
-      const headers = { ...defaultHeaders, ...props?.headers };
-      const pageHead = props?.head !== undefined ? renderHead(props.head) : "";
-      const cssLinks =
-        (isProd ? cssFor(entryName) : [])
-          .map((href) => lt + `link rel="stylesheet" href="${escapeAttr(href)}"${nAttr} />`)
-          .join("") +
-        extraStyles
-          .map((href) => lt + `link rel="stylesheet" href="${escapeAttr(href)}"${nAttr} />`)
-          .join("");
-
-      const resolvedHead = resolveHeadConflicts({
-        shellTitle: titleDefault,
-        explicitTitle: props?.title,
-        shellHead: head,
-        ssrHead,
-        pageHead,
-      });
-
-      return c.html(
-        `<!doctype html><html lang="${escapeAttr(lang)}"${htmlAttributes(c)}><head>${resolvedHead.title}` +
-          `<meta charset="utf-8" /><meta content="width=device-width, initial-scale=1" name="viewport" />` +
-          resolvedHead.shellHead +
-          `<link rel="stylesheet" href="${escapeAttr(stylesHref)}"${nAttr} />` +
-          cssLinks +
-          resolvedHead.ssrHead +
-          pageHead +
-          preloadHtml +
-          prefetchHtml +
-          scriptHtml +
-          `</head>` +
-          `<body><div id="${ids.rootId}" ${PAGE_ATTRIBUTES.path}="${escapeAttr(page.path)}" ${PAGE_ATTRIBUTES.route}="${escapeAttr(page.route)}">${bodyHtml}</div>` +
-          dataHtml +
-          `</body></html>`,
-        status,
-        headers,
-      );
-      },
-    );
-
+  // references is immune to any copy/version layout; the casts at the
+  // render/setRenderer boundary carry the correctness burden.
+  const middleware = async (c: any, next: Next): Promise<void> => {
+    (c as { setRenderer: SetEntryRenderer }).setRenderer((entryName, props) => renderEntry(c, entryName, props));
     await next();
-  }
-
-  const mw = inner as typeof inner & {
-    availableEntries: () => string[] | undefined;
   };
-  mw.availableEntries = availableEntries;
-  return mw;
+
+  return Object.assign(middleware, { availableEntries: (): string[] | undefined => known });
 }

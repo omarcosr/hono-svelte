@@ -113,7 +113,7 @@ app.get("/", (c) => c.render("home"));
 app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
 ```
 
-The rule is simple: **if the `.svelte` file has no `<script>`, the page ships as plain HTML. If it has one, it hydrates on the client** with initial data available via `$props()`.
+The rule is simple: **if the `.svelte` file has no `<script>`, the page ships as plain HTML. If it has one, it hydrates on the client** with initial data available via `$props()`. A `<script module>` alone (e.g. holding the page's `Data` type) does not count — only an instance `<script>` makes a page interactive.
 
 Server-rendered components (static pages and the layouts wrapping them) have no client bundle, so `pages()` compiles them for the server with `css: "injected"`: their `<style>` blocks arrive inline in the `<head>`. An explicit `<svelte:options css="...">` in the component wins.
 

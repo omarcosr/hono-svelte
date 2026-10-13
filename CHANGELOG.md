@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **fix(vite): a page whose only script is `<script module>` stays static.**
+  Declaring a per-page `Data` type turned a zero-JS page into a client page
+  shipping a bundle; only an instance `<script>` makes a page interactive now.
+- **perf(shell):** a static page and its layouts load in parallel; the layout
+  chain, client-entry lookups and prefetch targets are computed once per entry
+  instead of on every request.
+- **refactor(shell):** the render path is split into small functions
+  (`renderEntry`, `clientAssets`, `renderSsrBody`, `linkTags`); one shared
+  `escapeAttr`; dead code removed.
+
 ## 0.7.0
 
 - **feat(vite): per-page `Data` can use imported types.** The generated dts
