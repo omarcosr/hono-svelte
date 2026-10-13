@@ -78,6 +78,16 @@ export interface Register {}
  */
 export type Entry = Register extends { entries: infer E extends string } ? E : string;
 
+/** Entries whose page declares a `Data` type (they only accept their own `data`). */
+export type TypedEntry = Register extends { typedEntries: infer E extends string } ? E : never;
+
+/**
+ * Entries without a `Data` type — what a generic helper forwarding an entry
+ * to `c.render` should accept: typed entries need their own `data` and have
+ * no overload taking an arbitrary entry. `string` without the generated `.d.ts`.
+ */
+export type UntypedEntry = Exclude<Entry, TypedEntry>;
+
 export type RenderProps<TData = Record<string, unknown>> = {
   title?: string;
   data?: TData;

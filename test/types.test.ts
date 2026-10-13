@@ -57,8 +57,15 @@ describe("per-page Data typing", () => {
     const result = typecheck(
       {
         "usage.ts": [
-          'import { Hono } from "hono";',
+          'import { Hono, type Context } from "hono";',
+          'import type { Entry, TypedEntry, UntypedEntry } from "hono-svelte";',
           "const app = new Hono();",
+          'export const helper = (entry: UntypedEntry) => (c: Context) => c.render(entry, { title: "x" });',
+          'app.get("/plain", helper("plain"));',
+          "// @ts-expect-error typed pages need their own data",
+          'app.get("/rows", helper("rows/index"));',
+          'export const typed: TypedEntry = "rows/index";',
+          'export const any: Entry[] = ["plain", "rows/index"];',
           'app.get("/ok", (c) => c.render("rows/index", { data: { rows: [{ id: 1, name: "a" }] } }));',
           "// @ts-expect-error id must be a number",
           'app.get("/bad", (c) => c.render("rows/index", { data: { rows: [{ id: "x", name: "a" }] } }));',
@@ -68,6 +75,7 @@ describe("per-page Data typing", () => {
       },
       (dir) => {
         mkdirSync(join(dir, "pages", "rows"), { recursive: true });
+        writeFileSync(join(dir, "pages", "plain.svelte"), "<p>plain</p>\n");
         writeFileSync(join(dir, "model.ts"), "export type Row = { id: number; name: string };\n");
         writeFileSync(
           join(dir, "pages", "rows", "index.svelte"),

@@ -174,3 +174,18 @@ describe("qualifyImports", () => {
     expect(qualifyImports("type Data = Alias;", imports, (s) => s.replace("./", "../src/"))).toBe('type Data = import("../src/types").Original;');
   });
 });
+
+describe("template literal types and URL specifiers", () => {
+  const same = (s: string) => s;
+  it("qualifies references inside \${…} holes, not the literal text", () => {
+    const imports: DataImport[] = [{ local: "RowId", imported: "RowId", specifier: "$lib/db" }];
+    expect(qualifyImports("type Data = { id: `RowId-${RowId}-${Lowercase<RowId>}` };", imports, same)).toBe(
+      'type Data = { id: `RowId-${import("$lib/db").RowId}-${Lowercase<import("$lib/db").RowId>}` };',
+    );
+  });
+
+  it("keeps import specifiers containing //", () => {
+    const page = '<script module lang="ts">\n  import type { Row } from "https://x.dev/db"; // note\n  export type Data = { r: Row };\n</script>';
+    expect(extractPageDataType(page).imports).toEqual([{ local: "Row", imported: "Row", specifier: "https://x.dev/db" }]);
+  });
+});

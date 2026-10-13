@@ -300,6 +300,7 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       `declare module "hono-svelte" {`,
       `  interface Register {`,
       `    entries: ${typeName};`,
+      `    typedEntries: ${typed.length > 0 ? typed.map((p) => JSON.stringify(p.entryName)).join(" | ") : "never"};`,
       `  }`,
       `}`,
       "",
