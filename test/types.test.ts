@@ -2,7 +2,7 @@
 // throwaway project that imports `hono-svelte` (mapped to src/) next to the
 // declarations `pages({ dts: true })` writes.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -12,10 +12,11 @@ const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // `typescript` exports no `./bin/*` subpath; its bin lives at a fixed path.
 const tsc = join(pkgRoot, "node_modules", "typescript", "bin", "tsc");
 
-function typecheck(files: Record<string, string>): { ok: boolean; output: string } {
+function typecheck(files: Record<string, string>, prepare?: (dir: string) => void): { ok: boolean; output: string } {
   // Inside the repo so `hono` and `svelte` resolve from its node_modules.
   const dir = mkdtempSync(join(pkgRoot, "test", ".types-"));
   try {
+    prepare?.(dir);
     writeFileSync(
       join(dir, "tsconfig.json"),
       JSON.stringify({
@@ -50,6 +51,47 @@ function generatedDts(): string {
   plugin.buildStart();
   return plugin.typeDeclarations();
 }
+
+describe("per-page Data typing", () => {
+  it("checks c.render against a Data type that imports app types", () => {
+    const result = typecheck(
+      {
+        "usage.ts": [
+          'import { Hono } from "hono";',
+          "const app = new Hono();",
+          'app.get("/ok", (c) => c.render("rows/index", { data: { rows: [{ id: 1, name: "a" }] } }));',
+          "// @ts-expect-error id must be a number",
+          'app.get("/bad", (c) => c.render("rows/index", { data: { rows: [{ id: "x", name: "a" }] } }));',
+          "// @ts-expect-error rows is required",
+          'app.get("/missing", (c) => c.render("rows/index", { data: {} }));',
+        ].join("\n"),
+      },
+      (dir) => {
+        mkdirSync(join(dir, "pages", "rows"), { recursive: true });
+        writeFileSync(join(dir, "model.ts"), "export type Row = { id: number; name: string };\n");
+        writeFileSync(
+          join(dir, "pages", "rows", "index.svelte"),
+          [
+            '<script module lang="ts">',
+            '  import type { Row } from "../../model";',
+            "  export type Data = { rows: Row[] };",
+            "</script>",
+            '<script lang="ts">',
+            "  const data: Data = $props();",
+            "</script>",
+            "<p>{data.rows.length}</p>",
+            "",
+          ].join("\n"),
+        );
+        const plugin = pages({ pagesDir: join(dir, "pages"), dts: join(dir, "entries.d.ts") });
+        plugin.configResolved({ root: dir } as never);
+        plugin.buildStart();
+      },
+    );
+    expect(result.output).toBe("");
+    expect(result.ok).toBe(true);
+  }, 60_000);
+});
 
 describe("Entry type", () => {
   it("is the generated union, importable from the package", () => {
