@@ -222,4 +222,42 @@ describe("regressions", () => {
       expect(runtime, file).toBeNull();
     }
   });
+
+  it("a page whose only script is <script module> (Data type) stays static", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-module-only-"));
+    try {
+      writeFileSync(join(dir, "typed.svelte"), '<script module lang="ts">\n  export type Data = { n: number };\n</script>\n<p>x</p>\n');
+      writeFileSync(join(dir, "legacy.svelte"), '<script context="module" lang="ts">export type Data = { n: number };</script><p>x</p>\n');
+      writeFileSync(join(dir, "client.svelte"), '<script module lang="ts">export type Data = { n: number };</script>\n<script lang="ts">let x = 1;</script>{x}\n');
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: dir } as never);
+      expect(plugin.staticEntries().sort()).toEqual(["legacy", "typed"]);
+      expect(plugin.hasClient("client")).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("static pages load their layouts in parallel and render them outermost first", async () => {
+    const order: string[] = [];
+    const slow = (name: string, mod: unknown, ms: number) => async () => {
+      await new Promise((r) => setTimeout(r, ms));
+      order.push(name);
+      return { default: mod };
+    };
+    const app = new Hono();
+    app.use(
+      "/*",
+      shell({
+        ssrPages: manifest(
+          { "a/page": slow("page", PropsPage, 30) },
+          { __layouts: { layout: slow("outer", Outer, 20), "a/layout": slow("inner", Inner, 10) }, __clientEntries: [] },
+        ),
+      }),
+    );
+    app.get("/", (c) => c.render("a/page", { data: { name: "Ada" } }));
+    const html = await (await app.request("/")).text();
+    expect(order).toEqual(["inner", "outer", "page"]);
+    expect(html.indexOf('class="outer"')).toBeLessThan(html.indexOf('class="inner"'));
+  });
 });

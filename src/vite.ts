@@ -97,6 +97,18 @@ export function withInjectedCss(source: string): string {
   );
 }
 
+/**
+ * A page needs client JS when it has an instance `<script>`. A module script
+ * (`<script module>` / legacy `context="module"`) alone — the usual home of
+ * the per-page `Data` type — runs no per-component code: the page stays static.
+ */
+function hasInstanceScript(source: string): boolean {
+  for (const m of source.matchAll(/<script\b([^>]*)>/gi)) {
+    if (!/\bmodule\b|\bcontext\s*=\s*["']module["']/i.test(m[1])) return true;
+  }
+  return false;
+}
+
 function entryNameFromFile(file: string): string {
   return normalizeSlashes(file).slice(0, -".svelte".length);
 }
@@ -192,7 +204,7 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
           }
         }
       }
-      const hasScript = /<script[\s>]/i.test(source);
+      const hasScript = hasInstanceScript(source);
       // A page is static when it has no <script> — EVEN with layouts.
       // The shell SSRs the page and wraps it in the layout chain; the layout
       // files themselves are compiled into the page's client entry only when
