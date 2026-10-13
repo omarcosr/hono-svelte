@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractPageDataType } from "../src/page-data.js";
+import { extractPageDataType, qualifyImports, type DataImport } from "../src/page-data.js";
 
 describe("extractPageDataType", () => {
   it("returns null when there is no module script or no Data", () => {
@@ -110,6 +110,22 @@ describe("extractPageDataType", () => {
     expect(out.importedRefs).toEqual(["lib", "Plan"]);
   });
 
+  it("reports the imports behind the references (named, aliased, default, namespace)", () => {
+    const src = `<script module lang="ts">
+  import type { Plan, Seat as S } from "./plan";
+  import Def from "./def";
+  import * as lib from "$lib/x";
+  import { unused } from "./unused";
+  export type Data = { plan: Plan; seat: S; def: Def; extra: lib.Extra };
+</script>`;
+    expect(extractPageDataType(src).imports).toEqual([
+      { local: "Plan", imported: "Plan", specifier: "./plan" },
+      { local: "S", imported: "Seat", specifier: "./plan" },
+      { local: "Def", imported: "default", specifier: "./def" },
+      { local: "lib", imported: "*", specifier: "$lib/x" },
+    ]);
+  });
+
   it("scans an interface with generics and extends", () => {
     const src =
       '<script module lang="ts">export interface Data<T extends { id: number }> extends Array<T> { pick: T["id"] }</script>';
@@ -117,5 +133,44 @@ describe("extractPageDataType", () => {
     expect(out.declaration).toBe(
       'interface Data<T extends { id: number }> extends Array<T> { pick: T["id"] }',
     );
+  });
+});
+
+describe("qualifyImports", () => {
+  const imports: DataImport[] = [
+    { local: "Row", imported: "Row", specifier: "$lib/db" },
+    { local: "Alias", imported: "Original", specifier: "./types" },
+    { local: "Def", imported: "default", specifier: "./def" },
+    { local: "ns", imported: "*", specifier: "pkg" },
+  ];
+  const same = (specifier: string) => specifier;
+
+  it("rewrites named, aliased, default and namespace references", () => {
+    expect(qualifyImports("type Data = { a: Row; b: Alias[]; c: Def; d: ns.Thing<Row> };", imports, same)).toBe(
+      'type Data = { a: import("$lib/db").Row; b: import("./types").Original[]; c: import("./def").default; d: import("pkg").Thing<import("$lib/db").Row> };',
+    );
+  });
+
+  it("leaves object keys, property accesses, strings and comments alone", () => {
+    const decl = 'type Data = { Row: string; Def?: Row; x: Other.Row; s: "Row"; /* Row */ c: (Row) };';
+    expect(qualifyImports(decl, imports, same)).toBe(
+      'type Data = { Row: string; Def?: import("$lib/db").Row; x: Other.Row; s: "Row"; /* Row */ c: (import("$lib/db").Row) };',
+    );
+  });
+
+  it("handles conditional types, typeof and interfaces", () => {
+    expect(qualifyImports("type Data = Row extends Def ? Row : never;", imports, same)).toBe(
+      'type Data = import("$lib/db").Row extends import("./def").default ? import("$lib/db").Row : never;',
+    );
+    expect(qualifyImports("type Data = Awaited<ReturnType<typeof Def>>;", imports, same)).toBe(
+      'type Data = Awaited<ReturnType<typeof import("./def").default>>;',
+    );
+    expect(qualifyImports("interface Data extends Row { extra: Alias }", imports, same)).toBe(
+      'interface Data extends import("$lib/db").Row { extra: import("./types").Original }',
+    );
+  });
+
+  it("maps specifiers through the callback", () => {
+    expect(qualifyImports("type Data = Alias;", imports, (s) => s.replace("./", "../src/"))).toBe('type Data = import("../src/types").Original;');
   });
 });

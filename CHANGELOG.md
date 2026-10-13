@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **feat(vite): per-page `Data` can use imported types.** The generated dts
+  rewrites references to types imported in the page's `<script module>` as
+  `import("…")` type queries (named, aliased, default and namespace
+  imports; alias/package specifiers kept, relative ones re-resolved from the
+  dts). Pages whose data comes from the app's own types — every real app —
+  can now use per-page typing instead of being skipped with a warning.
+- **fix(vite): typed `c.render` overloads are actually enforced.** The
+  catch-all overload accepted every entry, so a wrong `data` for a typed
+  page failed its overload and silently matched the catch-all
+  (`Record<string, unknown>`). The catch-all now excludes typed entries.
+  Behavior change: rendering a typed entry through a value typed as the
+  whole `Entry` union no longer compiles — narrow the entry first.
+- New `test/types.test.ts` case runs `tsc` on a page whose `Data` imports
+  an app type: correct data compiles, a wrong field type and a missing field
+  fail.
+
 ## 0.6.2
 
 - **fix(shell): unknown-entry errors never list the app's pages in

@@ -197,12 +197,11 @@ describe("pages() plugin", () => {
       expect(content).toContain(
         '(entryName: "typed", props?: import("hono-svelte").RenderProps<HonoSvelteData_typed>): Response | Promise<Response>;',
       );
-      // typed overload first, union catch-all stays last
-      expect(content.indexOf("HonoSvelteData_typed")).toBeLessThan(
-        content.indexOf("entryName: HonoSvelteEntries"),
-      );
-      // the union catch-all is still present for untyped entries
-      expect(content).toContain("(entryName: HonoSvelteEntries, props?: ");
+      // typed overload first; the catch-all stays last and excludes typed entries,
+      // otherwise a wrong `data` would fall through to it unchecked
+      const catchAll = '(entryName: Exclude<HonoSvelteEntries, "typed">, props?: ';
+      expect(content).toContain(catchAll);
+      expect(content.indexOf("HonoSvelteData_typed")).toBeLessThan(content.indexOf(catchAll));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -230,25 +229,35 @@ describe("pages() plugin", () => {
     }
   });
 
-  it("Data types referencing imports are skipped with a one-time warning", () => {
+  it("Data types referencing imports are carried into the dts as import() queries", () => {
     const dir = mkdtempSync(join(tmpdir(), "hs-data3-"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
+      mkdirSync(join(dir, "pages", "dash"), { recursive: true });
       writeFileSync(
-        join(dir, "bad.svelte"),
-        '<script module lang="ts">\n  import type { Plan } from "./plan";\n  export type Data = { plan: Plan };\n</script>\n<h1>bad</h1>\n',
+        join(dir, "pages", "dash", "bms.svelte"),
+        [
+          '<script module lang="ts">',
+          '  import type { Plan } from "../../lib/plan";',
+          '  import type { Row as BmRow } from "$lib/db";',
+          '  import * as catalog from "@app/catalog";',
+          "  export type Data = { plan: Plan; rows: BmRow[]; offer: catalog.Offer };",
+          "</script>",
+          "<h1>bms</h1>",
+          "",
+        ].join("\n"),
       );
-      const out = join(dir, "entries.d.ts");
-      const plugin = pages({ pagesDir: dir, dts: out });
-      plugin.configResolved({ root: pkgRoot } as never);
+      const out = join(dir, "types", "entries.d.ts");
+      const plugin = pages({ pagesDir: join(dir, "pages"), dts: out });
+      plugin.configResolved({ root: dir } as never);
       plugin.buildStart();
-      plugin.buildStart(); // refresh again: still one warning
-      expect(plugin.dataTypes()).toEqual({});
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('page "bad"');
-      expect(warn.mock.calls[0][0]).toContain("Plan");
       const content = readFileSync(out, "utf8");
-      expect(content).not.toContain("HonoSvelteData_bad");
+      expect(content).toContain(
+        'type HonoSvelteData_dash_bms = { plan: import("../lib/plan").Plan; rows: import("$lib/db").Row[]; offer: import("@app/catalog").Offer };',
+      );
+      expect(content).toContain('(entryName: "dash/bms", props?: import("hono-svelte").RenderProps<HonoSvelteData_dash_bms>)');
+      expect(plugin.dataTypes()["dash/bms"]).toBe("type Data = { plan: Plan; rows: BmRow[]; offer: catalog.Offer };");
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });

@@ -416,13 +416,30 @@ declare module "hono" {
 }
 ```
 
-The `Data` declaration is inlined verbatim into the dts, so it must be
-**self-contained** — inline shapes or built-ins only. References to imported
-types can't be resolved from the dts location; such pages keep
-`Record<string, unknown>` data with a one-time warning. Both
+`Data` can use types imported in the same `<script module>` — the usual
+case when the data comes from your database layer:
+
+```svelte
+<script module lang="ts">
+  import type { Row } from "$lib/db";
+  import type { LayoutData } from "../dashboard/layout-data";
+  export type Data = LayoutData & { rows: Row[] };
+</script>
+```
+
+The generated dts rewrites each imported reference as an `import("…")` type
+query (`import("$lib/db").Row`). Alias and package specifiers are kept as
+written (your `tsconfig` resolves them anywhere); relative ones are
+re-resolved from the dts location. Types declared locally in the module
+script (not exported from another file) can't be referenced. Both
 `export type Data = ...` and `export interface Data { ... }` work (including
 legacy `<script context="module">`). `pages().dataTypes()` exposes the
 extracted declarations.
+
+Entries with a `Data` type only accept their own overload: `c.render(entry, …)`
+with an entry typed as the whole `Entry` union (a dynamic entry name) no
+longer compiles for typed pages — narrow the entry or render through a
+`switch`.
 
 ## Production tips
 

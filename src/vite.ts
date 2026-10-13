@@ -2,7 +2,7 @@ import { existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from "no
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
-import { extractPageDataType } from "./page-data.js";
+import { extractPageDataType, qualifyImports, type DataImport } from "./page-data.js";
 import {
   ENTRY_PREFIX,
   ENTRY_RESOLVED_PREFIX,
@@ -110,6 +110,8 @@ type PageSpec = {
   layouts: string[];
   /** Extracted `Data` declaration (per-page typed data for the dts), if any. */
   dataType?: string;
+  /** Module-script imports referenced by `dataType`. */
+  dataImports: DataImport[];
 };
 
 export function pages(options: PagesOptions = {}): PagesPlugin {
@@ -127,7 +129,6 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   let vitePlugins: { name?: string }[] = [];
   let viteMode = "";
   let lastWrittenDts: string | null = null;
-  const warnedDataImports = new Set<string>();
 
   function computeLayouts(allFiles: string[]): LayoutSpec[] {
     if (!layoutsEnabled) return [];
@@ -198,27 +199,11 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       // the page needs JS. Layout-wrapped static pages ship zero JS.
       const isStatic = !hasScript && !alwaysClient.has(entryName);
       // Per-page typed data: `export type Data` / `interface Data` in a
-      // <script module> feeds a typed overload in the generated dts. The
-      // declaration is inlined verbatim, so it must be self-contained — a
-      // type referencing imports can't be resolved from the dts location.
+      // <script module> feeds a typed overload in the generated dts. Types it
+      // imports are carried along as `import("…")` queries (see dataDeclaration).
       const extracted = extractPageDataType(source);
-      let dataType: string | undefined;
-      if (extracted.declaration) {
-        if (extracted.importedRefs.length > 0) {
-          if (!warnedDataImports.has(entryName)) {
-            warnedDataImports.add(entryName);
-            console.warn(
-              `[hono-svelte] page "${entryName}": the Data type references imported ` +
-                `identifier(s) [${extracted.importedRefs.join(", ")}]. Per-page data typing ` +
-                `needs a self-contained type (inline shapes or built-ins only) — this page ` +
-                `keeps Record<string, unknown> data.`,
-            );
-          }
-        } else {
-          dataType = extracted.declaration;
-        }
-      }
-      result.push({ entryName, file, absFile, isStatic, layouts, dataType });
+      const dataType = extracted.declaration ?? undefined;
+      result.push({ entryName, file, absFile, isStatic, layouts, dataType, dataImports: extracted.imports });
     }
     return result;
   }
@@ -247,7 +232,7 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
 
   function stateKey(): string {
     return listPages()
-      .map((p) => (p.isStatic ? "S:" : "C:") + p.entryName + (p.dataType ? "@" + p.dataType : ""))
+      .map((p) => (p.isStatic ? "S:" : "C:") + p.entryName + (p.dataType ? "@" + p.dataType + JSON.stringify(p.dataImports) : ""))
       .join("|");
   }
 
@@ -256,6 +241,23 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
     const root = viteRoot ?? process.cwd();
     const rel = typeof options.dts === "string" ? options.dts : "src/hono-svelte-entries.d.ts";
     return isAbsolute(rel) ? rel : resolve(root, rel);
+  }
+
+  /**
+   * The page's `Data` declaration, valid from the dts location: imported
+   * types become `import("…")` queries. Bare/alias specifiers (`$lib/db`,
+   * `some-package`) stay as written; relative ones are re-resolved from the
+   * page file to the dts file (or the Vite root when `dts` is off).
+   */
+  function dataDeclaration(page: PageSpec): string {
+    const declaration = page.dataType as string;
+    if (page.dataImports.length === 0) return declaration;
+    const fromDir = dirname(resolveDtsPath() ?? resolve(viteRoot ?? process.cwd(), "index.d.ts"));
+    return qualifyImports(declaration, page.dataImports, (specifier) => {
+      if (!specifier.startsWith("./") && !specifier.startsWith("../")) return specifier;
+      const target = normalizeSlashes(relative(fromDir, resolve(dirname(page.absFile), specifier)));
+      return target.startsWith(".") ? target : "./" + target;
+    });
   }
 
   function dataTypeNames(): Map<string, string> {
@@ -280,7 +282,7 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
     const dataNames = dataTypeNames();
     const typed = listPages().filter((p) => p.dataType && dataNames.has(p.entryName));
     const declarationFor = (p: PageSpec): string => {
-      const decl = (p.dataType as string).replace("Data", dataNames.get(p.entryName) as string);
+      const decl = dataDeclaration(p).replace("Data", dataNames.get(p.entryName) as string);
       return decl.endsWith(";") ? decl : decl + ";";
     };
     return [
@@ -303,13 +305,17 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       "",
       `declare module "hono" {`,
       `  interface ContextRenderer {`,
-      // Typed overloads come first, then the union catch-all: overload
-      // resolution tries them in order, entries without `Data` fall through.
+      // One typed overload per page with `Data`, then a catch-all for the
+      // other entries. The catch-all EXCLUDES the typed entries: otherwise a
+      // wrong `data` fails the typed overload and silently matches the
+      // catch-all (Record<string, unknown>), and nothing is checked.
       ...typed.map(
         (p) =>
           `    (entryName: ${JSON.stringify(p.entryName)}, props?: import("hono-svelte").RenderProps<${dataNames.get(p.entryName)}>): Response | Promise<Response>;`,
       ),
-      `    (entryName: ${typeName}, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;`,
+      `    (entryName: ${
+        typed.length > 0 ? `Exclude<${typeName}, ${typed.map((p) => JSON.stringify(p.entryName)).join(" | ")}>` : typeName
+      }, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;`,
       `  }`,
       `}`,
       "",
