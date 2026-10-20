@@ -206,8 +206,13 @@ export type ShellOptions = {
   layoutData?: LayoutDataOptions;
 };
 
-/** Loader for `shell({ layoutData })`; the context is the request's Hono context. */
-export type LayoutDataLoader<TData = Record<string, unknown>> = (c: any) => TData | Promise<TData>;
+/**
+ * Loader for `shell({ layoutData })`; the context is the request's Hono
+ * context. Returning a `Response` (e.g. `c.redirect("/login")` when the
+ * session is missing) short-circuits the render: that response is sent
+ * instead of the page.
+ */
+export type LayoutDataLoader<TData = Record<string, unknown>> = (c: any) => TData | Response | Promise<TData | Response>;
 
 export type ShellContext = {
   render: (entryName: string, props?: RenderProps) => Response | Promise<Response>;
@@ -532,10 +537,15 @@ export function shell(options: ShellOptions = {}) {
    * Error renders (status >= 400) survive a failing loader: the error page
    * renders without layout data instead of turning into a bare 500.
    */
-  async function pageData(c: any, entryName: string, data: Record<string, unknown> | undefined, status: number) {
+  async function pageData(
+    c: any,
+    entryName: string,
+    data: Record<string, unknown> | undefined,
+    status: number,
+  ): Promise<Record<string, unknown> | undefined | Response> {
     const loaders = layoutDataChain(entryName);
     if (loaders.length === 0) return data;
-    let parts: Record<string, unknown>[];
+    let parts: (Record<string, unknown> | Response)[];
     try {
       parts = await Promise.all(loaders.map((load) => load(c)));
     } catch (err) {
@@ -543,6 +553,9 @@ export function shell(options: ShellOptions = {}) {
       console.error(`[hono-svelte] layoutData failed while rendering error page "${entryName}":`, err);
       return data;
     }
+    // Outermost loader first: a root layout's redirect wins over an inner one's.
+    const short = parts.find((p) => p instanceof Response);
+    if (short) return short;
     return Object.assign({}, ...parts, data) as Record<string, unknown>;
   }
 
@@ -601,6 +614,7 @@ export function shell(options: ShellOptions = {}) {
     const nAttr = nonceAttr(nonce);
     const status = props?.status ?? defaultStatus;
     const data = await pageData(c, entryName, props?.data, status);
+    if (data instanceof Response) return data;
 
     let bodyHtml = "";
     let ssrHead = "";

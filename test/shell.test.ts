@@ -522,6 +522,24 @@ describe("shell", () => {
       expect(html).not.toContain("application/json");
     });
 
+    it("a loader returning a Response short-circuits the render (outermost wins)", async () => {
+      let innerCalls = 0;
+      const app = layoutApp({
+        layout: (c) => (c.req.header("x-user") ? { user: c.req.header("x-user") } : c.redirect("/login")),
+        "dash/layout": () => {
+          innerCalls++;
+          return new Response("inner", { status: 418 });
+        },
+      });
+      const res = await app.request("/client");
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("/login");
+      expect(innerCalls).toBe(1);
+      const inner = await app.request("/client", { headers: { "x-user": "grace" } });
+      expect(inner.status).toBe(418);
+      expect(await inner.text()).toBe("inner");
+    });
+
     it("keys must be layout entries", () => {
       expect(() => shell({ layoutData: { "dash/index": () => ({}) } })).toThrow(/not a layout entry/);
     });

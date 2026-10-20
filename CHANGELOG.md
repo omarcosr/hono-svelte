@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **feat(shell): a `layoutData` loader can return a `Response`** (e.g.
+  `c.redirect("/login")`) — the shell sends it instead of the page, so one
+  layout guards every route under it.
+
 - **feat(vite): typed `layoutData`.** `export type Data` in a layout's
   `<script module>` lands in the generated dts: `shell({ layoutData })` keys
   are checked against the real layouts and each loader's result against the
