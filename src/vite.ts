@@ -1,5 +1,6 @@
 import { existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { manifestKeysFor, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { extractPageDataType, qualifyImports, type DataImport } from "./page-data.js";
@@ -37,6 +38,16 @@ export type PagesOptions = {
    * @default false
    */
   dts?: boolean | string;
+  /**
+   * The client build's Vite manifest, embedded into the server build so
+   * `shell()` resolves hashed JS/CSS on its own — no reading the file at
+   * startup and passing it as `assets`. Path relative to the Vite root; the
+   * client build must run first. A missing file embeds nothing (the shell
+   * keeps its `assets` default). `false` disables it. Only `vite build`
+   * embeds it — dev never does.
+   * @default "dist/.vite/manifest.json"
+   */
+  clientManifest?: string | false;
 };
 
 export type PagesPlugin = Plugin & {
@@ -157,7 +168,32 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   let viteRoot: string | null = null;
   let vitePlugins: { name?: string }[] = [];
   let viteMode = "";
+  let viteCommand = "";
   let lastWrittenDts: string | null = null;
+
+  /** Client manifest JSON to embed, or `null` (dev, disabled, or not built yet). */
+  function clientManifestJson(): string | null {
+    if (viteCommand !== "build" || options.clientManifest === false) return null;
+    const file = resolve(viteRoot ?? process.cwd(), options.clientManifest ?? "dist/.vite/manifest.json");
+    if (!existsSync(file)) return null;
+    let manifest: ViteManifest;
+    try {
+      manifest = JSON.parse(readFileSync(file, "utf8")) as ViteManifest;
+    } catch (err) {
+      throw new Error(`hono-svelte: invalid client manifest ${file}: ${(err as Error).message}`);
+    }
+    // A leftover manifest from an older client build silently links missing
+    // hashed files in production — flag pages it doesn't know about.
+    listPages();
+    const missing = Object.keys(cachedInput).filter((name) => !manifestKeysFor(name).some((key) => key in manifest));
+    if (missing.length > 0) {
+      console.warn(
+        `[hono-svelte] client manifest ${file} has no chunk for ${missing.map((m) => JSON.stringify(m)).join(", ")} — ` +
+          "stale or partial client build? Build the client before the server.",
+      );
+    }
+    return JSON.stringify(manifest);
+  }
 
   function computeLayouts(allFiles: string[]): LayoutSpec[] {
     if (!layoutsEnabled) return [];
@@ -446,6 +482,8 @@ function layoutImportPath(layout: LayoutSpec): string {
       ...(layoutLoaders.length > 0 ? layoutLoaders : ["  // no layouts"]),
       "};",
       "",
+      "export const clientManifest = " + (clientManifestJson() ?? "null") + ";",
+      "",
       "ssrPages.__allEntries = allEntries;",
       "ssrPages.__layouts = ssrLayouts;",
       "ssrPages.__clientEntries = clientEntries;",
@@ -664,8 +702,10 @@ function entryMountSource(page: PageSpec): string {
       root?: string;
       plugins?: { name?: string }[];
       mode?: string;
+      command?: string;
     };
     viteRoot = c.root ?? viteRoot;
+    viteCommand = c.command ?? "";
     vitePlugins = c.plugins ?? [];
     viteMode = c.mode ?? "";
     // Write the entries .d.ts as soon as the root is known — before

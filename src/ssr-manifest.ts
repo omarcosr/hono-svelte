@@ -4,6 +4,8 @@
 // redirects the shell relative import './ssr-manifest.js' to the
 // virtual manifest generated in memory.
 
+import type { ViteManifest } from "./assets.js";
+
 export const ssrPages: Record<string, () => Promise<{ default: unknown }>> = {};
 
 export const ssrLayouts: Record<string, () => Promise<{ default: unknown }>> = {};
@@ -15,3 +17,5 @@ export const layoutEntries: string[] = [];
 export const clientEntries: string[] = [];
 
 export const staticEntries: string[] = [];
+
+export const clientManifest: ViteManifest | null = null;

@@ -14,6 +14,7 @@ import { layoutChain } from "./layouts.js";
 import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
 import {
   allEntries as autoAllEntries,
+  clientManifest as autoClientManifest,
   ssrLayouts as autoSsrLayouts,
   ssrPages as autoSsrPages,
 } from "./ssr-manifest.js";
@@ -441,7 +442,8 @@ export function shell(options: ShellOptions = {}) {
   const titleDefault = options.title ?? "App";
   const lang = options.lang ?? "en";
   const assetsBase = (options.assetsBase ?? "/static").replace(/\/$/, "");
-  const assetsOpt = options.assets ?? assetsBase;
+  // `pages()` embeds the client build's manifest into the server build.
+  const assetsOpt = options.assets ?? autoClientManifest ?? assetsBase;
   const head = options.head ?? "";
   const defaultStatus = options.status ?? 200;
   const defaultHeaders = options.headers ?? {};
