@@ -20,6 +20,16 @@ function render(options: Parameters<typeof shell>[0]) {
   return app.request("/").then((res) => res.text());
 }
 
+describe("manifestKeyFor", () => {
+  it("accepts the root-relative key Vite writes for virtual entries", async () => {
+    const { manifestKeyFor, createManifestAssets } = await import("../src/assets.js");
+    const manifest = { "../../virtual:hono-svelte/entry/dash/index": { file: "static/dash/index-1.js" } };
+    expect(manifestKeyFor(manifest, "dash/index")).toBe("../../virtual:hono-svelte/entry/dash/index");
+    expect(manifestKeyFor(manifest, "dash")).toBeUndefined();
+    expect(createManifestAssets(manifest)("dash/index")).toBe("/static/dash/index-1.js");
+  });
+});
+
 describe("embedded client manifest", () => {
   it("resolves hashed JS and CSS without the assets option", async () => {
     const html = await render({});

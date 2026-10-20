@@ -28,6 +28,7 @@ export {
   immutableHeaders,
   manifestCssFor,
   manifestImportsFor,
+  manifestKeyFor,
   manifestKeysFor,
 } from "./assets.js";
 export type {

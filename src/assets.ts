@@ -40,12 +40,27 @@ export function manifestKeysFor(entryName: string): string[] {
   ];
 }
 
-function findChunk(manifest: ViteManifest, entryName: string): ViteManifestChunk | undefined {
+const VIRTUAL_ENTRY = "virtual:hono-svelte/entry/";
+
+/**
+ * Manifest key of an entry. Exact candidates first; then any key whose tail
+ * is the virtual id: Vite writes virtual entries relative to the root, so
+ * with a root below the cwd the key becomes `../../virtual:hono-svelte/entry/x`.
+ */
+export function manifestKeyFor(manifest: ViteManifest, entryName: string): string | undefined {
   for (const key of manifestKeysFor(entryName)) {
-    const chunk = manifest[key];
-    if (chunk) return chunk;
+    if (manifest[key]) return key;
   }
-  return undefined;
+  const tail = VIRTUAL_ENTRY + entryName;
+  return Object.keys(manifest).find((key) => {
+    const bare = key.startsWith(NULL) ? key.slice(1) : key;
+    return bare.replace(/^(\.\.\/)+/, "") === tail;
+  });
+}
+
+function findChunk(manifest: ViteManifest, entryName: string): ViteManifestChunk | undefined {
+  const key = manifestKeyFor(manifest, entryName);
+  return key === undefined ? undefined : manifest[key];
 }
 
 export function createManifestAssets(

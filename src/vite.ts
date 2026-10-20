@@ -1,6 +1,6 @@
 import { existsSync, globSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { manifestKeysFor, type ViteManifest } from "./assets.js";
+import { manifestKeyFor, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { extractPageDataType, qualifyImports, type DataImport, type PageDataExtraction } from "./page-data.js";
@@ -256,7 +256,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     // A leftover manifest from an older client build silently links missing
     // hashed files in production — flag pages it doesn't know about.
     listPages();
-    const missing = Object.keys(cachedInput).filter((name) => !manifestKeysFor(name).some((key) => key in manifest));
+    const missing = Object.keys(cachedInput).filter((name) => manifestKeyFor(manifest, name) === undefined);
     if (missing.length > 0) {
       console.warn(
         `[hono-svelte] client manifest ${file} has no chunk for ${missing.map((m) => JSON.stringify(m)).join(", ")} — ` +

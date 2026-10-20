@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **fix(assets): hashed entries resolve when the Vite root is not the cwd.**
+  Vite writes virtual entries to the manifest relative to the root
+  (`../../virtual:hono-svelte/entry/x`); the shell only knew the exact ids
+  and fell back to `/static/x.js` (404). New `manifestKeyFor(manifest, entry)`;
+  `test/build-client.test.ts` pins the key contract against a real client build.
+
 - **feat(shell): a `layoutData` loader can return a `Response`** (e.g.
   `c.redirect("/login")`) — the shell sends it instead of the page, so one
   layout guards every route under it.
