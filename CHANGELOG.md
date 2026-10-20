@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.1
+
+- **fix(vite): `hono-svelte` stays bundled when another plugin externalizes
+  it.** `@hono/vite-build` copies its `external` list into `ssr.external`,
+  which beats `noExternal` — `honoSvelte({ build: { external:
+  Object.keys(pkg.dependencies) } })` shipped a server bundle that imported the
+  package from node_modules and loaded the empty manifest stub (no static
+  pages, no layouts, unhashed asset URLs). The plugin's `config` hook now runs
+  `post` and removes the package from `ssr.external` /
+  `environments.*.resolve.external` in place (#27).
+- **fix(playground): `runtime: "bun"` pinned.** Built through npm, runtime
+  auto-detection picked node and bundled `@hono/node-server`, whose global
+  `Response` override makes `Bun.serve` reject every response. README notes
+  the pitfall for apps that build and serve on different runtimes.
+
 ## 0.8.0
 
 - **BREAKING — `c.render(entry, data)` and `c.setHead(head)`.** The second

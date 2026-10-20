@@ -1,6 +1,6 @@
 {
   "name": "hono-svelte",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Server-side shell + multi-entry Svelte pages for Hono apps",
   "keywords": [
     "hono",
