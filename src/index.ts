@@ -509,11 +509,22 @@ export function shell(options: ShellOptions = {}) {
     layoutChain(entry, Object.keys(layoutDataLoaders)).map((name) => layoutDataLoaders[name] as LayoutDataLoader),
   );
 
-  /** Layout data (outermost first, inner wins) under the route's own `data`. */
-  async function pageData(c: any, entryName: string, data: Record<string, unknown> | undefined) {
+  /**
+   * Layout data (outermost first, inner wins) under the route's own `data`.
+   * Error renders (status >= 400) survive a failing loader: the error page
+   * renders without layout data instead of turning into a bare 500.
+   */
+  async function pageData(c: any, entryName: string, data: Record<string, unknown> | undefined, status: number) {
     const loaders = layoutDataChain(entryName);
     if (loaders.length === 0) return data;
-    const parts = await Promise.all(loaders.map((load) => load(c)));
+    let parts: Record<string, unknown>[];
+    try {
+      parts = await Promise.all(loaders.map((load) => load(c)));
+    } catch (err) {
+      if (status < 400) throw err;
+      console.error(`[hono-svelte] layoutData failed while rendering error page "${entryName}":`, err);
+      return data;
+    }
     return Object.assign({}, ...parts, data) as Record<string, unknown>;
   }
 
@@ -570,8 +581,8 @@ export function shell(options: ShellOptions = {}) {
     const page: PageInfo = { path: c.req.path, route: routeOf(c) };
     const nonce = resolveNonce(c);
     const nAttr = nonceAttr(nonce);
-    const data = await pageData(c, entryName, props?.data);
-    const { html: dataHtml } = serializePageData(entryName, data, ids.dataId, dataLimit);
+    const status = props?.status ?? defaultStatus;
+    const data = await pageData(c, entryName, props?.data, status);
 
     let bodyHtml = "";
     let ssrHead = "";
@@ -585,6 +596,10 @@ export function shell(options: ShellOptions = {}) {
         isSsr = false;
       }
     }
+    // Static pages ship no JS: layout data only feeds the server render, so
+    // only the route's own `data` is embedded (layout data like a session
+    // never lands in their HTML). Client-rendered pages need all of it.
+    const { html: dataHtml } = serializePageData(entryName, isSsr ? props?.data : data, ids.dataId, dataLimit);
 
     const pageHead = props?.head !== undefined ? renderHead(props.head) : "";
     const resolvedHead = resolveHeadConflicts({
@@ -608,7 +623,7 @@ export function shell(options: ShellOptions = {}) {
         `<body><div id="${ids.rootId}" ${PAGE_ATTRIBUTES.path}="${escapeAttr(page.path)}" ${PAGE_ATTRIBUTES.route}="${escapeAttr(page.route)}">${bodyHtml}</div>` +
         dataHtml +
         `</body></html>`,
-      props?.status ?? defaultStatus,
+      status,
       { ...defaultHeaders, ...props?.headers },
     );
   }
