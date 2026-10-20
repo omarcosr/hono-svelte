@@ -468,8 +468,30 @@ describe("shell", () => {
       app.get("/static", (c) => c.render("dash/page", { data: { name: "Ada" } }));
       app.get("/client", (c) => c.render("dash/client", { data: { name: "Ada" } }));
       app.get("/outside", (c) => c.render("other/client"));
+      app.get("/error", (c) => c.render("dash/client", { status: 500, data: { message: "boom" } }));
       return app;
     }
+
+    it("static pages embed only the route data (layout data stays server-side)", async () => {
+      const html = await (await layoutApp({ "dash/layout": () => ({ user: "grace" }) }).request("/static")).text();
+      expect(html).toContain('<nav class="who">grace</nav>');
+      expect(dataOf(html, "dash/page")).toEqual({ name: "Ada" });
+    });
+
+    it("a failing loader breaks normal renders but not error renders", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const app = layoutApp({
+        "dash/layout": () => {
+          throw new Error("no session");
+        },
+      });
+      expect((await app.request("/client")).status).toBe(500);
+      const res = await app.request("/error");
+      expect(res.status).toBe(500);
+      expect(dataOf(await res.text(), "dash/client")).toEqual({ message: "boom" });
+      expect(errorSpy).toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
 
     it("merges the chain's loaders under the route data (inner layout wins, route wins)", async () => {
       const app = layoutApp({

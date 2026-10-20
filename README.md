@@ -197,7 +197,7 @@ app.use(
 c.render("dashboard/orders", { data: { orders } });
 ```
 
-Loaders of one chain run in parallel. On key clashes the inner layout wins over the outer one, and the route's own `data` wins over all of them. The merged object is what gets serialized, so client-rendered layouts and pages receive it too. A page `Data` type (typed `c.render`) should declare only what the route passes; a page that also reads layout data annotates its props with both, e.g. `let { orders, session }: Data & DashboardLayoutData = $props()`.
+Loaders of one chain run in parallel. On key clashes the inner layout wins over the outer one, and the route's own `data` wins over all of them. Client-rendered pages get the merged object serialized, so their layouts receive it too; static pages (no JS) only embed the route's own `data`, so layout data such as a session never lands in their HTML. On error renders (status >= 400, e.g. `errorHandler`/`notFoundHandler`) a failing loader is logged and the page renders without layout data instead of failing again. A page `Data` type (typed `c.render`) should declare only what the route passes; a page that also reads layout data annotates its props with both, e.g. `let { orders, session }: Data & DashboardLayoutData = $props()`.
 
 > Pages must NOT import their layout manually — the shell applies it automatically. The plugin fails fast at build time (`manually imports ... but the layout is applied automatically`) instead of rendering `<main><div><main>` twice.
 
