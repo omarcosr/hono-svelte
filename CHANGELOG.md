@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **feat(vite): typed `layoutData`.** `export type Data` in a layout's
+  `<script module>` lands in the generated dts: `shell({ layoutData })` keys
+  are checked against the real layouts and each loader's result against the
+  layout's `Data`. New `Layout`, `LayoutDataFor`, `LayoutDataMap`,
+  `LayoutDataOptions` types; `LayoutDataLoader<T>` is generic.
+
 - **feat(vite): `honoSvelte()` config preset.** `export default honoSvelte({ entry })`
   replaces the three-branch Vite config: svelte plugin, `pages({ dts: true })`,
   client build (hashed assets + manifest) and `@hono/vite-dev-server` /

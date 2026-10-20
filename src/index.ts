@@ -91,6 +91,22 @@ export type TypedEntry = Register extends { typedEntries: infer E extends string
  */
 export type UntypedEntry = Exclude<Entry, TypedEntry>;
 
+/** Layout entry names (`"layout"`, `"dashboard/layout"`) from the generated `.d.ts`; `string` without it. */
+export type Layout = Register extends { layouts: infer L extends string } ? L : string;
+
+/** `Data` declared by a layout's `<script module>`, keyed by layout entry; `{}` without the generated `.d.ts`. */
+export type LayoutDataMap = Register extends { layoutData: infer M extends Record<string, unknown> } ? M : {};
+
+/** What the `layoutData` loader of a layout must return: its `Data` type when declared, else any record. */
+export type LayoutDataFor<L extends string> = L extends keyof LayoutDataMap ? LayoutDataMap[L] : Record<string, unknown>;
+
+/**
+ * `shell({ layoutData })`: one loader per layout entry. With the generated
+ * `.d.ts` the keys are checked against the real layouts and each loader
+ * against the layout's `Data` type.
+ */
+export type LayoutDataOptions = { [L in Layout]?: LayoutDataLoader<LayoutDataFor<L>> };
+
 export type RenderProps<TData = Record<string, unknown>> = {
   title?: string;
   data?: TData;
@@ -187,11 +203,11 @@ export type ShellOptions = {
    * Loaders of one chain run in parallel; on key clashes inner layouts win
    * over outer ones and the route's own `data` wins over all of them.
    */
-  layoutData?: Record<string, LayoutDataLoader>;
+  layoutData?: LayoutDataOptions;
 };
 
 /** Loader for `shell({ layoutData })`; the context is the request's Hono context. */
-export type LayoutDataLoader = (c: any) => Record<string, unknown> | Promise<Record<string, unknown>>;
+export type LayoutDataLoader<TData = Record<string, unknown>> = (c: any) => TData | Promise<TData>;
 
 export type ShellContext = {
   render: (entryName: string, props?: RenderProps) => Response | Promise<Response>;
@@ -500,7 +516,8 @@ export function shell(options: ShellOptions = {}) {
     (known ?? []).filter((e) => e !== entry && !isSsrEntry(e)).map((e) => ({ entry: e, url: prodUrl(e) })),
   );
 
-  const layoutDataLoaders = options.layoutData ?? {};
+  // Internally untyped: the generated dts narrows the keys for the app, the shell indexes by name.
+  const layoutDataLoaders: Record<string, LayoutDataLoader> = (options.layoutData ?? {}) as Record<string, LayoutDataLoader>;
   for (const name of Object.keys(layoutDataLoaders)) {
     if (!isLayoutEntry(name)) {
       throw new Error(`hono-svelte: layoutData key ${JSON.stringify(name)} is not a layout entry ("layout" or "<dir>/layout")`);

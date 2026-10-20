@@ -87,7 +87,14 @@ export type PagesPlugin = Plugin & {
   validateConfig?: () => void;
 };
 
-export type LayoutSpec = { entryName: string; file: string; absFile: string };
+export type LayoutSpec = {
+  entryName: string;
+  file: string;
+  absFile: string;
+  /** Extracted `Data` declaration (typed `layoutData` loader in the dts), if any. */
+  dataType?: string;
+  dataImports: DataImport[];
+};
 
 const DEFAULT_IGNORE = ["**/_*.svelte"];
 
@@ -266,7 +273,9 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       if (!file.endsWith("/layout.svelte") && file !== "layout.svelte") continue;
       if (!filter(pagesDir + "/" + file)) continue;
       const entryName = entryNameFromFile(file);
-      layouts.push({ entryName, file, absFile: resolve(pagesDir, file) });
+      const absFile = resolve(pagesDir, file);
+      const { extracted } = sourceInfo(absFile);
+      layouts.push({ entryName, file, absFile, dataType: extracted.declaration ?? undefined, dataImports: extracted.imports });
     }
     return layouts.sort((a, b) => a.entryName.localeCompare(b.entryName));
   }
@@ -349,9 +358,13 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
   }
 
   function stateKey(): string {
-    return listPages()
+    const pagesKey = listPages()
       .map((p) => (p.isStatic ? "S:" : "C:") + p.entryName + (p.dataType ? "@" + p.dataType + JSON.stringify(p.dataImports) : ""))
       .join("|");
+    const layoutsKey = cachedLayouts
+      .map((l) => "L:" + l.entryName + (l.dataType ? "@" + l.dataType + JSON.stringify(l.dataImports) : ""))
+      .join("|");
+    return pagesKey + "||" + layoutsKey;
   }
 
   function resolveDtsPath(): string | null {
@@ -367,28 +380,31 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
    * `some-package`) stay as written; relative ones are re-resolved from the
    * page file to the dts file (or the Vite root when `dts` is off).
    */
-  function dataDeclaration(page: PageSpec): string {
-    const declaration = page.dataType as string;
-    if (page.dataImports.length === 0) return declaration;
+  type DataOwner = { entryName: string; absFile: string; dataType?: string; dataImports: DataImport[] };
+
+  function dataDeclaration(owner: DataOwner): string {
+    const declaration = owner.dataType as string;
+    if (owner.dataImports.length === 0) return declaration;
     const fromDir = dirname(resolveDtsPath() ?? resolve(viteRoot ?? process.cwd(), "index.d.ts"));
-    return qualifyImports(declaration, page.dataImports, (specifier) => {
+    return qualifyImports(declaration, owner.dataImports, (specifier) => {
       if (!specifier.startsWith("./") && !specifier.startsWith("../")) return specifier;
-      const target = normalizeSlashes(relative(fromDir, resolve(dirname(page.absFile), specifier)));
+      const target = normalizeSlashes(relative(fromDir, resolve(dirname(owner.absFile), specifier)));
       return target.startsWith(".") ? target : "./" + target;
     });
   }
 
+  /** Unique dts type name per entry (pages, then layouts) that declares `Data`. */
   function dataTypeNames(): Map<string, string> {
     const names = new Map<string, string>();
     const used = new Set<string>();
-    for (const p of listPages()) {
-      if (!p.dataType) continue;
-      const base = "HonoSvelteData_" + p.entryName.replace(/[^A-Za-z0-9_$]/g, "_");
+    for (const owner of [...listPages(), ...cachedLayouts] as DataOwner[]) {
+      if (!owner.dataType) continue;
+      const base = "HonoSvelteData_" + owner.entryName.replace(/[^A-Za-z0-9_$]/g, "_");
       let name = base;
       let n = 2;
       while (used.has(name)) name = `${base}_${n++}`;
       used.add(name);
-      names.set(p.entryName, name);
+      names.set(owner.entryName, name);
     }
     return names;
   }
@@ -399,10 +415,12 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
     const unionSrc = names.length === 0 ? "never" : names.map((n) => JSON.stringify(n)).join(" | ");
     const dataNames = dataTypeNames();
     const typed = listPages().filter((p) => p.dataType && dataNames.has(p.entryName));
-    const declarationFor = (p: PageSpec): string => {
-      const decl = dataDeclaration(p).replace("Data", dataNames.get(p.entryName) as string);
+    const typedLayouts = cachedLayouts.filter((l) => l.dataType && dataNames.has(l.entryName));
+    const declarationFor = (owner: DataOwner): string => {
+      const decl = dataDeclaration(owner).replace("Data", dataNames.get(owner.entryName) as string);
       return decl.endsWith(";") ? decl : decl + ";";
     };
+    const union = (names: string[]): string => (names.length > 0 ? names.map((n) => JSON.stringify(n)).join(" | ") : "never");
     return [
       `export type ${typeName} = ${unionSrc};`,
       "",
@@ -413,12 +431,27 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
             "",
           ]
         : []),
+      ...(typedLayouts.length > 0
+        ? [
+            "// Per-layout data — `export type Data` in a layout's <script module> types its `shell({ layoutData })` loader:",
+            ...typedLayouts.map((l) => declarationFor(l)),
+            "",
+          ]
+        : []),
       // Registers the union on the package itself so apps can write
       // `import type { Entry } from "hono-svelte"` instead of importing this file.
       `declare module "hono-svelte" {`,
       `  interface Register {`,
       `    entries: ${typeName};`,
-      `    typedEntries: ${typed.length > 0 ? typed.map((p) => JSON.stringify(p.entryName)).join(" | ") : "never"};`,
+      `    typedEntries: ${union(typed.map((p) => p.entryName))};`,
+      `    layouts: ${union(cachedLayouts.map((l) => l.entryName))};`,
+      ...(typedLayouts.length > 0
+        ? [
+            `    layoutData: {`,
+            ...typedLayouts.map((l) => `      ${JSON.stringify(l.entryName)}: ${dataNames.get(l.entryName)};`),
+            `    };`,
+          ]
+        : []),
       `  }`,
       `}`,
       "",

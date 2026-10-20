@@ -101,6 +101,53 @@ describe("per-page Data typing", () => {
   }, 60_000);
 });
 
+describe("layout Data typing", () => {
+  it("types shell({ layoutData }) keys and loader results from the layouts' Data", () => {
+    const result = typecheck(
+      {
+        "usage.ts": [
+          'import { shell, type Layout, type LayoutDataFor } from "hono-svelte";',
+          'export const ok = shell({ layoutData: { "dash/layout": () => ({ user: "grace", seats: 2 }), layout: async () => ({ anything: true }) } });',
+          "// @ts-expect-error seats must be a number",
+          'export const badType = shell({ layoutData: { "dash/layout": () => ({ user: "grace", seats: "2" }) } });',
+          "// @ts-expect-error user is required",
+          'export const missing = shell({ layoutData: { "dash/layout": () => ({ seats: 2 }) } });',
+          "// @ts-expect-error not a layout",
+          'export const notLayout = shell({ layoutData: { "dash/index": () => ({}) } });',
+          'export const layouts: Layout[] = ["layout", "dash/layout"];',
+          'export const data: LayoutDataFor<"dash/layout"> = { user: "x", seats: 1 };',
+          'export const loose: LayoutDataFor<"layout"> = { whatever: 1 };',
+        ].join("\n"),
+      },
+      (dir) => {
+        mkdirSync(join(dir, "pages", "dash"), { recursive: true });
+        writeFileSync(join(dir, "pages", "layout.svelte"), "<slot />\n");
+        writeFileSync(
+          join(dir, "pages", "dash", "layout.svelte"),
+          '<script module lang="ts">\n  export type Data = { user: string; seats: number };\n</script>\n<slot />\n',
+        );
+        writeFileSync(join(dir, "pages", "dash", "index.svelte"), "<p>dash</p>\n");
+        const plugin = pages({ pagesDir: join(dir, "pages"), dts: join(dir, "entries.d.ts") });
+        plugin.configResolved({ root: dir } as never);
+        plugin.buildStart();
+      },
+    );
+    expect(result.output).toBe("");
+    expect(result.ok).toBe(true);
+  }, 60_000);
+
+  it("without the generated declarations any layout key and record is accepted", () => {
+    const result = typecheck({
+      "usage.ts": [
+        'import { shell } from "hono-svelte";',
+        'export const ok = shell({ layoutData: { "x/layout": () => ({ a: 1 }) } });',
+      ].join("\n"),
+    });
+    expect(result.output).toBe("");
+    expect(result.ok).toBe(true);
+  }, 60_000);
+});
+
 describe("Entry type", () => {
   it("is the generated union, importable from the package", () => {
     const result = typecheck({

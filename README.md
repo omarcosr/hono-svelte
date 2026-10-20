@@ -178,6 +178,28 @@ c.render("dashboard/orders", { data: { orders } });
 
 Loaders of one chain run in parallel. On key clashes the inner layout wins over the outer one, and the route's own `data` wins over all of them. Client-rendered pages get the merged object serialized, so their layouts receive it too; static pages (no JS) only embed the route's own `data`, so layout data such as a session never lands in their HTML. On error renders (status >= 400, e.g. `errorHandler`/`notFoundHandler`) a failing loader is logged and the page renders without layout data instead of failing again. A page `Data` type (typed `c.render`) should declare only what the route passes; a page that also reads layout data annotates its props with both, e.g. `let { orders, session }: Data & DashboardLayoutData = $props()`.
 
+Type the loader the same way pages type their data — `export type Data` in the layout's `<script module>`. With `pages({ dts: true })` the generated `.d.ts` checks the `layoutData` keys against the real layouts and each loader's result against that `Data`:
+
+```svelte
+<!-- src/pages/dashboard/layout.svelte -->
+<script module lang="ts">
+  export type Data = { session: { name: string } };
+</script>
+
+<script lang="ts">
+  import type { Snippet } from "svelte";
+  let { session, children }: Data & { children: Snippet } = $props();
+</script>
+```
+
+```ts
+shell({ layoutData: { "dashboard/layout": (c) => ({ session: { name: "grace" } }) } }); // checked
+shell({ layoutData: { "dashboard/layout": () => ({}) } }); // tsc: session is required
+shell({ layoutData: { "dashboard/index": () => ({}) } }); // tsc: not a layout
+```
+
+`Layout` (layout entry union), `LayoutDataFor<"dashboard/layout">` and `LayoutDataLoader<T>` are exported for helpers.
+
 > Pages must NOT import their layout manually — the shell applies it automatically. The plugin fails fast at build time (`manually imports ... but the layout is applied automatically`) instead of rendering `<main><div><main>` twice.
 
 Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect them; `layouts: false` restores legacy ignore).

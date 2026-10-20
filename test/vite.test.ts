@@ -324,6 +324,30 @@ describe("pages() plugin", () => {
     }
   });
 
+  it("a layout's Data types its layoutData loader in the dts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-layout-data-"));
+    try {
+      mkdirSync(join(dir, "dash"), { recursive: true });
+      writeFileSync(join(dir, "layout.svelte"), "<slot />\n");
+      writeFileSync(
+        join(dir, "dash", "layout.svelte"),
+        '<script module lang="ts">\n  export type Data = { user: string };\n</script>\n<slot />\n',
+      );
+      writeFileSync(join(dir, "dash", "index.svelte"), "<p>x</p>\n");
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: dir } as never);
+      plugin.buildStart();
+      const content = plugin.typeDeclarations();
+      expect(content).toContain("type HonoSvelteData_dash_layout = { user: string };");
+      expect(content).toContain('layouts: "dash/layout" | "layout";');
+      expect(content).toContain('"dash/layout": HonoSvelteData_dash_layout;');
+      expect(content).toContain("typedEntries: never;");
+      expect(content).not.toContain('(entryName: "dash/layout"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("interface Data and nested entry names get sanitized dts names", () => {
     const dir = mkdtempSync(join(tmpdir(), "hs-data2-"));
     try {
