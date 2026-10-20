@@ -144,6 +144,27 @@ describe("pages() plugin", () => {
     });
   });
 
+  describe("stylesEntry", () => {
+    function stylesPlugin(stylesEntry?: string) {
+      const plugin = pages({ pagesDir: "test/fixtures/pages", ...(stylesEntry ? { stylesEntry } : {}) });
+      plugin.configResolved({ root: pkgRoot } as never);
+      plugin.buildStart();
+      return plugin;
+    }
+
+    it("input() adds the stylesheet as the `styles` entry", () => {
+      const input = stylesPlugin("./src/app.css").input();
+      expect(Object.keys(input)).toEqual(["admin", "styles"]);
+      expect(input.styles).toBe(resolve(pkgRoot, "src/app.css"));
+    });
+
+    it("the virtual manifest hands the path to the shell", () => {
+      expect(stylesPlugin("/src/app.css").load(MANIFEST_RESOLVED)).toContain('export const stylesEntry = "src/app.css";');
+      expect(stylesPlugin().load(MANIFEST_RESOLVED)).toContain("export const stylesEntry = null;");
+      expect(Object.keys(stylesPlugin().input())).toEqual(["admin"]);
+    });
+  });
+
   it("virtual entry embeds the opaque ids and the mount", () => {
     const plugin = makePlugin();
     const ids = getIds("admin");

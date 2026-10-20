@@ -48,6 +48,13 @@ export type PagesOptions = {
    * @default "dist/.vite/manifest.json"
    */
   clientManifest?: string | false;
+  /**
+   * Global stylesheet, relative to the Vite root (e.g. `"src/app.css"`).
+   * Declared once here: `input()` adds it to the client build (as `styles`)
+   * and the virtual manifest hands it to `shell()` as its `stylesEntry`
+   * default — no repeating the path in the Vite config and the server.
+   */
+  stylesEntry?: string;
 };
 
 export type PagesPlugin = Plugin & {
@@ -160,6 +167,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   const layoutsEnabled = options.layouts ?? true;
   const alwaysClient = new Set(options.alwaysClient ?? []);
   const header = options.generatedHeader ?? "// @generated - hono-svelte, do not edit.";
+  const stylesEntry = options.stylesEntry ? normalizeSlashes(options.stylesEntry).replace(/^(\.?\/)+/, "") : undefined;
   const filter = createFilter(["**/*.svelte"], ignore, { resolve: pagesDir });
 
   let cachedPages: PageSpec[] | null = null;
@@ -484,6 +492,8 @@ function layoutImportPath(layout: LayoutSpec): string {
       "",
       "export const clientManifest = " + (clientManifestJson() ?? "null") + ";",
       "",
+      "export const stylesEntry = " + JSON.stringify(stylesEntry ?? null) + ";",
+      "",
       "ssrPages.__allEntries = allEntries;",
       "ssrPages.__layouts = ssrLayouts;",
       "ssrPages.__clientEntries = clientEntries;",
@@ -633,7 +643,11 @@ function entryMountSource(page: PageSpec): string {
     },
     input() {
       listPages();
-      return cachedInput;
+      if (!stylesEntry) return cachedInput;
+      if (cachedInput.styles) {
+        throw new Error('hono-svelte: a page named "styles" clashes with the stylesEntry input; rename the page');
+      }
+      return { ...cachedInput, styles: resolve(viteRoot ?? process.cwd(), stylesEntry) };
     },
     entries() {
       return listPages().map((p) => p.entryName);

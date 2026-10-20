@@ -15,6 +15,7 @@ import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
 import {
   allEntries as autoAllEntries,
   clientManifest as autoClientManifest,
+  stylesEntry as autoStylesEntry,
   ssrLayouts as autoSsrLayouts,
   ssrPages as autoSsrPages,
 } from "./ssr-manifest.js";
@@ -123,7 +124,7 @@ export type ShellOptions = {
    * (served by Vite); prod resolves the hashed file from the manifest given
    * in `assets`, falling back to `/static/styles.css`. `stylesHref` wins
    * when set.
-   * @default "src/styles.css"
+   * @default `pages({ stylesEntry })` when set, else "src/styles.css"
    */
   stylesEntry?: string;
   /** Global head HTML (fonts, meta) — page `head` prop is appended after it. */
@@ -451,7 +452,7 @@ export function shell(options: ShellOptions = {}) {
   const strict = options.strict ?? true;
   const ssrFallback = options.ssrFallback ?? false;
   const extraStyles = options.styles ?? [];
-  const stylesEntry = (options.stylesEntry ?? "src/styles.css").replace(/^\/+/, "");
+  const stylesEntry = (options.stylesEntry ?? autoStylesEntry ?? "src/styles.css").replace(/^\/+/, "");
 
   // The manifest never changes for a shell instance: resolve once, cache per entry.
   const manifest = manifestFor(assetsOpt);
