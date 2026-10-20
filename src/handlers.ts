@@ -34,6 +34,14 @@ export type ErrorPageOptions = {
    * get an HTML document.
    */
   json?: (c: any) => boolean;
+  /**
+   * Body of the JSON response when `json` matches. Receives the resolved
+   * `{ status, message }` and, for `errorHandler`, the thrown error — so an
+   * API keeps its own error contract (`code`, validation `errors`…). Only
+   * `{ status, message }` is safe to expose as-is: `err` is the raw error,
+   * 5xx internals included. @default ({ message }) => ({ message })
+   */
+  jsonBody?: (page: ErrorPageData, err?: Error) => unknown;
 };
 
 type EntryRenderFn = (entryName: string, props?: RenderProps) => Response | Promise<Response>;
@@ -49,9 +57,11 @@ function respond(
   entry: string,
   page: ErrorPageData,
   headers?: Record<string, string>,
+  err?: Error,
 ): Response | Promise<Response> {
   if (opts.json?.(c)) {
-    return (c as unknown as { json: JsonHeadersFn }).json({ message: page.message }, page.status, headers);
+    const body = opts.jsonBody ? opts.jsonBody(page, err) : { message: page.message };
+    return (c as unknown as { json: JsonHeadersFn }).json(body, page.status, headers);
   }
   return entryRender(c)(entry, {
     title: opts.title,
@@ -117,6 +127,6 @@ export function errorHandler(opts: ServerErrorHandlerOptions = {}) {
       else if (typeof log === "function") log(err);
     }
     const message = expose(err, status) && err.message ? err.message : fallback;
-    return respond(c, opts, entry, { status, message }, headersOf(err));
+    return respond(c, opts, entry, { status, message }, headersOf(err), err);
   };
 }

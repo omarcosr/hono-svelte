@@ -225,6 +225,23 @@ app.notFound(notFoundHandler({ json: isApi, message: "Page not found" }));
 app.onError(errorHandler({ json: isApi, expose: (err, status) => status < 500 }));
 ```
 
+`jsonBody` keeps the API's own error contract instead of the bare `{ message }`. It receives the resolved `{ status, message }` (already safe: 5xx carry the generic message) and, in `errorHandler`, the thrown error:
+
+```ts
+app.onError(
+  errorHandler({
+    json: isApi,
+    jsonBody: ({ message }, err) => ({
+      message,
+      code: err instanceof AppError ? err.code : undefined,
+      errors: err instanceof ValidationError ? err.errors : undefined,
+    }),
+  }),
+);
+```
+
+To also map domain errors to a status, give them a numeric `status` (or throw an `HTTPException`): the handler reads it from any error.
+
 ```svelte
 <!-- src/pages/500.svelte -->
 <script lang="ts">
