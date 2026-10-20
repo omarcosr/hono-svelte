@@ -91,7 +91,7 @@ const app = new Hono().use("/*", shell({ title: "My App", lang: "en" }));
 
 ```ts
 app.get("/", (c) => c.render("home"));
-app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
+app.get("/dashboard", (c) => c.render("dashboard", { plan: "pro" }));
 ```
 
 The rule is simple: **if the `.svelte` file has no `<script>`, the page ships as plain HTML. If it has one, it hydrates on the client** with initial data available via `$props()`. A `<script module>` alone (e.g. holding the page's `Data` type) does not count — only an instance `<script>` makes a page interactive.
@@ -106,7 +106,7 @@ Small, public initial data (plan name, title, preferences) goes in `data` and ar
 Works for static (zero-JS) pages too: the shell passes `data` as SSR props **and** embeds the JSON for hydration:
 
 ```ts
-app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
+app.get("/dashboard", (c) => c.render("dashboard", { plan: "pro" }));
 ```
 
 Declare `export type Data` in the page's `<script module>` to type it per page — see [per-page data typing](#per-page-data-typing).
@@ -116,26 +116,32 @@ Anything sensitive, large, or frequently changing stays in the API, fetched afte
 
 ## Status, headers and per-page head
 
-```ts
-app.get("/old", (c) => c.render("gone", { status: 410, headers: { "X-Gone": "1" } }));
+`c.render(entry, data)` only carries the page data. Status and headers are Hono's own `c.status()` / `c.header()`; the document `<head>` is `c.setHead()`, set before rendering:
 
-app.get("/post", (c) =>
-  c.render("post", {
-    head: {
-      description: "A post about islands",
-      canonical: "https://example.com/post",
-      og: { title: "Islands", image: "https://example.com/og.png" },
-      twitter: { card: "summary_large_image" },
-    },
-  }),
-);
+```ts
+app.get("/old", (c) => {
+  c.status(410);
+  c.header("X-Gone", "1");
+  return c.render("gone");
+});
+
+app.get("/post", (c) => {
+  c.setHead({
+    title: "Islands",
+    description: "A post about islands",
+    canonical: "https://example.com/post",
+    og: { title: "Islands", image: "https://example.com/og.png" },
+    twitter: { card: "summary_large_image" },
+  });
+  return c.render("post", { slug: "islands" });
+});
 ```
 
-`<svelte:head>` inside pages also works (shell forwards SSR `head`). The document keeps a single `<title>` and `<meta name="description">`: `c.render(entry, { title })` > the page/layout `<svelte:head>` > `shell({ title })`, and a page description (`<svelte:head>` or `head.description`) replaces one set in `shell({ head })`. Page `head` never emits executable inline scripts (CSP-safe; `extra` is for trusted raw HTML like fonts or JSON-LD).
+`<svelte:head>` inside pages also works (shell forwards SSR `head`). The document keeps a single `<title>` and `<meta name="description">`: `c.setHead({ title })` > the page/layout `<svelte:head>` > `shell({ title })`, and a page description (`<svelte:head>` or `c.setHead({ description })`) replaces one set in `shell({ head })`. `setHead` never emits executable inline scripts (CSP-safe; `extra` is for trusted raw HTML like fonts or JSON-LD). Calling it twice merges; a middleware can set site-wide defaults and the route override them.
 
 ## Nested layouts
 
-`<dir>/layout.svelte` wraps every page under `<dir>/` (SSR inside-out, outermost first). A root `layout.svelte` wraps everything. Layouts receive `children` plus all page `data` as props — e.g. `title`/`description` passed via `c.render(entry, { data })`:
+`<dir>/layout.svelte` wraps every page under `<dir>/` (SSR inside-out, outermost first). A root `layout.svelte` wraps everything. Layouts receive `children` plus all page `data` as props — e.g. `title`/`description` passed via `c.render(entry, data)`:
 
 ```svelte
 <!-- src/pages/dashboard/layout.svelte -->
@@ -153,7 +159,7 @@ app.get("/post", (c) =>
 
 ```ts
 // routes/dashboard/page1.ts — layout data comes from the route, not the page
-c.render("dashboard/page1", { data: { title: "Page 1", description: "..." } });
+c.render("dashboard/page1", { title: "Page 1", description: "..." });
 ```
 
 ```svelte
@@ -175,7 +181,7 @@ app.use(
 );
 
 // routes only pass what is theirs
-c.render("dashboard/orders", { data: { orders } });
+c.render("dashboard/orders", { orders });
 ```
 
 A loader may return a `Response` instead of data — `c.redirect("/login")` when there is no session — and the shell sends it instead of rendering the page; one guard for every route under the layout, no `requireSession()` per handler (the outermost layout's response wins). Loaders of one chain run in parallel. On key clashes the inner layout wins over the outer one, and the route's own `data` wins over all of them. Client-rendered pages get the merged object serialized, so their layouts receive it too; static pages (no JS) only embed the route's own `data`, so layout data such as a session never lands in their HTML. On error renders (status >= 400, e.g. `errorHandler`/`notFoundHandler`) a failing loader is logged and the page renders without layout data instead of failing again. A page `Data` type (typed `c.render`) should declare only what the route passes; a page that also reads layout data annotates its props with both, e.g. `let { orders, session }: Data & DashboardLayoutData = $props()`.
@@ -365,11 +371,11 @@ The returned function exposes `.pages` (the underlying plugin). The optional pee
 
 ### `shell(options?)`
 
-Hono middleware that provides `c.render(entry, { title?, data?, status?, headers?, head? })` on every route.
+Hono middleware that provides `c.render(entry, data?)` and `c.setHead(head)` on every route. Status and headers come from `c.status()` / `c.header()`.
 
 | Option | Default | Description |
 |---|---|---|
-| `title` | `"App"` | Title used when neither `c.render(entry, { title })` nor the page's `<svelte:head>` provides one |
+| `title` | `"App"` | Title used when neither `c.setHead({ title })` nor the page's `<svelte:head>` provides one |
 | `lang` | `"en"` | `<html>` `lang` attribute |
 | `htmlAttributes` | — | Extra `<html>` attributes (`{ "data-theme": "dark" }`) or `(c) => attrs` per request; values escaped |
 | `assetsBase` | `"/static"` | Deprecated — use `assets` |
@@ -383,8 +389,7 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 | `preload` | `true` in prod | `<link rel="modulepreload">` for the entry (+ manifest imports) |
 | `prefetch` | `false` | `"all"` emits `modulepreload` for other entries; `"hover"` injects a script that preloads them on link hover |
 | `dataLimit` | `102400` | Warn once above this many `data` bytes (`false` disables) |
-| `status` | `200` | Default response status |
-| `headers` | `{}` | Default response headers (per-render `headers` merge over them) |
+| `headers` | `{}` | Default response headers; one the route set with `c.header()` wins |
 | `strict` | `true` | Unknown entries throw a dev-friendly error; `false` disables |
 | `ssrFallback` | `false` | SSR failures log and fall back to client rendering instead of a 500 |
 | `knownEntries` | auto from manifest | Override the page list used by strict mode and prefetch |
@@ -451,7 +456,10 @@ declare module "hono-svelte" {
 
 declare module "hono" {
   interface ContextRenderer {
-    (entryName: HonoSvelteEntries, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
+    (entryName: HonoSvelteEntries, data?: Record<string, unknown>): Response | Promise<Response>;
+  }
+  interface Context<E extends import("hono").Env = any, P extends string = any, I extends import("hono").Input = {}> {
+    setHead(head: import("hono-svelte").HeadOptions): void;
   }
 }
 ```
@@ -465,17 +473,21 @@ The package exports the entry unions — the generated ones once the `.d.ts` is 
 ```ts
 import type { UntypedEntry } from "hono-svelte";
 
-export const page = (entry: UntypedEntry, title: string) => (c: Context) => c.render(entry, { title });
+export const page = (entry: UntypedEntry, title: string) => (c: Context) => {
+  c.setHead({ title });
+  return c.render(entry);
+};
 ```
 
 `dts: "path/to/entries.d.ts"` sets a custom path (relative to the Vite root). The file regenerates on `buildStart` and via the dev watcher when entries change. Without `dts` (default `false`), declare the renderer manually with a plain `string`:
 
 ```ts
-import type { RenderProps } from "hono-svelte";
-
 declare module "hono" {
   interface ContextRenderer {
-    (entryName: string, props?: RenderProps): Response | Promise<Response>;
+    (entryName: string, data?: Record<string, unknown>): Response | Promise<Response>;
+  }
+  interface Context<E extends import("hono").Env = any, P extends string = any, I extends import("hono").Input = {}> {
+    setHead(head: import("hono-svelte").HeadOptions): void;
   }
 }
 ```
@@ -500,7 +512,7 @@ Declare the page payload once — the `Data` type in a `<script module>` — and
 ```
 
 With `pages({ dts: true })`, the generated `.d.ts` adds a typed overload per
-page, so `c.render("dashboard", { data: { plan: "pro" } })` is checked by
+page, so `c.render("dashboard", { plan: "pro" })` is checked by
 `tsc` — a missing `plan` fails the typecheck instead of shipping `undefined`
 to the client:
 
@@ -510,8 +522,8 @@ type HonoSvelteData_dashboard = { plan: string; seats: number };
 
 declare module "hono" {
   interface ContextRenderer {
-    (entryName: "dashboard", props?: import("hono-svelte").RenderProps<HonoSvelteData_dashboard>): Response | Promise<Response>;
-    (entryName: HonoSvelteEntries, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
+    (entryName: "dashboard", data: HonoSvelteData_dashboard): Response | Promise<Response>;
+    (entryName: Exclude<HonoSvelteEntries, "dashboard">, data?: Record<string, unknown>): Response | Promise<Response>;
   }
 }
 ```

@@ -18,7 +18,7 @@ export type InitFlavor = "minimal" | "full";
 
 
 // Initial stub so `npm run typecheck` is green right after init (routes call
-// c.render(entry, props) with 2 args — hono's default renderer takes 1).
+// c.render(entry, data) with 2 args — hono's default renderer takes 1).
 // `pages({ dts: true })` overwrites it with the typed entry union on the
 // first dev/build run.
 const ENTRIES_DTS_STUB = `// Initial stub — regenerated with the typed entry union by
@@ -28,7 +28,10 @@ export type HonoSvelteEntries = string;
 
 declare module "hono" {
   interface ContextRenderer {
-    (entryName: string, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
+    (entryName: string, data?: Record<string, unknown>): Response | Promise<Response>;
+  }
+  interface Context<E extends import("hono").Env = any, P extends string = any, I extends import("hono").Input = {}> {
+    setHead(head: import("hono-svelte").HeadOptions): void;
   }
 }
 `;
@@ -212,7 +215,7 @@ import { shell } from "hono-svelte";
 const app = new Hono().use("/*", shell({ title: "My App" }));
 
 app.get("/", (c) => c.render("index"));
-app.get("/hello", (c) => c.render("hello", { data: { name: "Ada" } }));
+app.get("/hello", (c) => c.render("hello", { name: "Ada" }));
 
 export default app;
 `;
@@ -246,16 +249,12 @@ import { requireSession } from "../middleware/auth";
 const app = new Hono()
   .get("/", requireSession(), (c) =>
     c.render("dashboard/index", {
-      data: {
         title: "Your space is ready.",
         description: "Counter + clock via typed RPC.",
-      },
-    }),
+      }),
   )
   .get("/page1", requireSession(), (c) =>
-    c.render("dashboard/page1", {
-      data: { title: "Page 1", description: "A second page, same layout." },
-    }),
+    c.render("dashboard/page1", { title: "Page 1", description: "A second page, same layout." }),
   );
 
 export default app;

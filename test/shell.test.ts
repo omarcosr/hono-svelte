@@ -15,7 +15,7 @@ function makeApp(ssrPages?: Record<string, () => Promise<{ default: unknown }>>)
   app.use("/*", shell({ title: "T", lang: "pt-BR", ssrPages }));
   app.get("/", (c) => c.render("home"));
   app.get("/admin", (c) => c.render("admin"));
-  app.get("/data", (c) => c.render("admin", { data: { html: "<b>x</b>" } }));
+  app.get("/data", (c) => c.render("admin", { html: "<b>x</b>" }));
   return app;
 }
 
@@ -64,7 +64,7 @@ describe("shell", () => {
   it("SSR static receives props.data", async () => {
     const app = new Hono();
     app.use("/*", shell({ ssrPages: { props: propsLoader } }));
-    app.get("/", (c) => c.render("props", { data: { name: "Ada" } }));
+    app.get("/", (c) => c.render("props", { name: "Ada" }));
     const html = await (await app.request("/")).text();
     expect(html).toContain("Ada");
     expect(html).not.toContain("<script type=\"module\"");
@@ -81,9 +81,15 @@ describe("shell", () => {
         "/*",
         shell({ title: "Shell default", head: '<meta name="description" content="Shell description" /><link rel="icon" href="/i.png" />', ssrPages: { head: headLoader, home: staticLoader } }),
       );
-      app.get("/page", (c) => c.render("head", opts.title ? { title: opts.title } : undefined));
+      app.get("/page", (c) => {
+        if (opts.title) c.setHead({ title: opts.title });
+        return c.render("head");
+      });
       app.get("/plain", (c) => c.render("home"));
-      app.get("/props-head", (c) => c.render("home", { head: { description: "Props description" } }));
+      app.get("/props-head", (c) => {
+        c.setHead({ description: "Props description" });
+        return c.render("home");
+      });
       return app;
     }
 
@@ -177,22 +183,42 @@ describe("shell", () => {
     });
   });
 
-  it("status and headers are respected", async () => {
+  it("warns once about the old { data } call shape and renders it as data", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const app = new Hono();
     app.use("/*", shell({}));
-    app.get("/missing", (c) => c.render("admin", { status: 404, headers: { "X-Page": "no" } }));
+    app.get("/", (c) => c.render("admin", { data: { x: 1 } }));
+    await app.request("/");
+    const html = await (await app.request("/")).text();
+    expect(html).toContain('{"data":{"x":1}}');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/old call shape/);
+    warn.mockRestore();
+  });
+
+  it("c.status() and c.header() are respected", async () => {
+    const app = new Hono();
+    app.use("/*", shell({}));
+    app.get("/missing", (c) => {
+      c.status(404);
+      c.header("X-Page", "no");
+      return c.render("admin");
+    });
     const res = await app.request("/missing");
     expect(res.status).toBe(404);
     expect(res.headers.get("X-Page")).toBe("no");
     expect(res.headers.get("content-type")).toContain("text/html");
   });
 
-  it("shell defaults for status and headers merge", async () => {
+  it("shell default headers merge under the route's own", async () => {
     const app = new Hono();
-    app.use("/*", shell({ status: 201, headers: { "X-App": "1", "X-Over": "shell" } }));
-    app.get("/", (c) => c.render("admin", { headers: { "X-Over": "page" } }));
+    app.use("/*", shell({ headers: { "X-App": "1", "X-Over": "shell" } }));
+    app.get("/", (c) => {
+      c.header("X-Over", "page");
+      return c.render("admin");
+    });
     const res = await app.request("/");
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     expect(res.headers.get("X-App")).toBe("1");
     expect(res.headers.get("X-Over")).toBe("page");
   });
@@ -227,11 +253,10 @@ describe("shell", () => {
   it("per-page head merges after global head", async () => {
     const app = new Hono();
     app.use("/*", shell({ head: '<meta name="global" content="g" />' }));
-    app.get("/", (c) =>
-      c.render("admin", {
-        head: { description: "Page desc", og: { title: "OG" }, canonical: "https://x.test/" },
-      }),
-    );
+    app.get("/", (c) => {
+      c.setHead({ description: "Page desc", og: { title: "OG" }, canonical: "https://x.test/" });
+      return c.render("admin");
+    });
     const html = await (await app.request("/")).text();
     const globalAt = html.indexOf('name="global"');
     const descAt = html.indexOf('name="description"');
@@ -255,7 +280,7 @@ describe("shell", () => {
     try {
       const app = new Hono();
       app.use("/*", shell({ dataLimit: 10 } as never));
-      app.get("/", (c) => c.render("admin", { data: { big: "0123456789abcdef" } }));
+      app.get("/", (c) => c.render("admin", { big: "0123456789abcdef" }));
       await app.request("/");
       await app.request("/");
       expect(warn).toHaveBeenCalledTimes(1);
@@ -271,9 +296,9 @@ describe("shell", () => {
     try {
       const app = new Hono();
       app.use("/*", shell({ dataLimit: 10 } as never));
-      app.get("/a", (c) => c.render("admin", { data: { big: "0123456789abcdef" } }));
-      app.get("/b", (c) => c.render("home", { data: { big: "0123456789abcdef" } }));
-      app.get("/c", (c) => c.render("admin", { data: { big: "0123456789abcdef" } }));
+      app.get("/a", (c) => c.render("admin", { big: "0123456789abcdef" }));
+      app.get("/b", (c) => c.render("home", { big: "0123456789abcdef" }));
+      app.get("/c", (c) => c.render("admin", { big: "0123456789abcdef" }));
       await app.request("/a");
       await app.request("/b");
       await app.request("/c");
@@ -436,7 +461,7 @@ describe("shell", () => {
         ) as never,
       }),
     );
-    app.get("/", (c) => c.render("nested/page", { data: { name: "Ada" } }));
+    app.get("/", (c) => c.render("nested/page", { name: "Ada" }));
     const html = await (await app.request("/")).text();
     expect(html).toContain('class="layout"');
     expect(html).toContain("Ada");
@@ -465,10 +490,13 @@ describe("shell", () => {
           strict: false,
         }),
       );
-      app.get("/static", (c) => c.render("dash/page", { data: { name: "Ada" } }));
-      app.get("/client", (c) => c.render("dash/client", { data: { name: "Ada" } }));
+      app.get("/static", (c) => c.render("dash/page", { name: "Ada" }));
+      app.get("/client", (c) => c.render("dash/client", { name: "Ada" }));
       app.get("/outside", (c) => c.render("other/client"));
-      app.get("/error", (c) => c.render("dash/client", { status: 500, data: { message: "boom" } }));
+      app.get("/error", (c) => {
+        c.status(500);
+        return c.render("dash/client", { message: "boom" });
+      });
       return app;
     }
 

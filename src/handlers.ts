@@ -13,7 +13,7 @@
 // typed via the narrow cast below.
 
 import type { HeadProps } from "./head.js";
-import type { RenderProps } from "./index.js";
+import type { ShellContext } from "./index.js";
 
 /** Data every error page receives (merged under `opts.data`). */
 export type ErrorPageData = {
@@ -44,12 +44,7 @@ export type ErrorPageOptions = {
   jsonBody?: (page: ErrorPageData, err?: Error) => unknown;
 };
 
-type EntryRenderFn = (entryName: string, props?: RenderProps) => Response | Promise<Response>;
 type JsonHeadersFn = (body: unknown, status: number, headers?: Record<string, string>) => Response;
-
-function entryRender(c: any): EntryRenderFn {
-  return (c as unknown as { render: EntryRenderFn }).render;
-}
 
 function respond(
   c: any,
@@ -63,13 +58,13 @@ function respond(
     const body = opts.jsonBody ? opts.jsonBody(page, err) : { message: page.message };
     return (c as unknown as { json: JsonHeadersFn }).json(body, page.status, headers);
   }
-  return entryRender(c)(entry, {
-    title: opts.title,
-    data: { ...page, ...opts.data },
-    head: opts.head,
-    status: page.status,
-    ...(headers ? { headers } : {}),
-  });
+  const shell = c as unknown as ShellContext & { status: (status: number) => void; header: (name: string, value: string) => void };
+  shell.status(page.status);
+  for (const [name, value] of Object.entries(headers ?? {})) shell.header(name, value);
+  if (opts.title !== undefined || opts.head !== undefined) {
+    shell.setHead({ ...(typeof opts.head === "string" ? { extra: opts.head } : opts.head), ...(opts.title !== undefined ? { title: opts.title } : {}) });
+  }
+  return shell.render(entry, { ...page, ...opts.data });
 }
 
 /**

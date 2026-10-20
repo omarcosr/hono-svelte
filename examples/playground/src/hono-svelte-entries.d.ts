@@ -13,6 +13,10 @@ declare module "hono-svelte" {
 
 declare module "hono" {
   interface ContextRenderer {
-    (entryName: HonoSvelteEntries, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;
+    (entryName: HonoSvelteEntries, data?: Record<string, unknown>): Response | Promise<Response>;
+  }
+  interface Context<E extends import("hono").Env = any, P extends string = any, I extends import("hono").Input = {}> {
+    /** Per-response <head> tags (title, description, og, …) for the page `c.render` emits next. */
+    setHead(head: import("hono-svelte").HeadOptions): void;
   }
 }

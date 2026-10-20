@@ -36,7 +36,7 @@ describe("regressions", () => {
         ),
       }),
     );
-    app.get("/", (c) => c.render("a/page", { data: { name: "Ada" } }));
+    app.get("/", (c) => c.render("a/page", { name: "Ada" }));
     const html = await (await app.request("/")).text();
     const outer = html.indexOf('class="outer"');
     const inner = html.indexOf('class="inner"');
@@ -255,7 +255,7 @@ describe("regressions", () => {
         ),
       }),
     );
-    app.get("/", (c) => c.render("a/page", { data: { name: "Ada" } }));
+    app.get("/", (c) => c.render("a/page", { name: "Ada" }));
     const html = await (await app.request("/")).text();
     expect(order).toEqual(["inner", "outer", "page"]);
     expect(html.indexOf('class="outer"')).toBeLessThan(html.indexOf('class="inner"'));

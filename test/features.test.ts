@@ -119,31 +119,39 @@ describe("assets", () => {
 });
 
 describe("handlers", () => {
-  it("notFoundHandler renders 404 entry", async () => {
-    let seen: { entry: string; props: unknown } | null = null;
+  function fakeContext() {
+    const calls: { status?: number; headers: Record<string, string>; head?: unknown; render?: { entry: string; data: unknown } } = {
+      headers: {},
+    };
     const c = {
-      render: (entry: string, props: unknown) => {
-        seen = { entry, props };
-        return "nf";
+      status: (s: number) => (calls.status = s),
+      header: (n: string, v: string) => (calls.headers[n] = v),
+      setHead: (h: unknown) => (calls.head = h),
+      render: (entry: string, data: unknown) => {
+        calls.render = { entry, data };
+        return "rendered";
       },
     };
-    const res = (await notFoundHandler()(c as unknown as Context)) as unknown;
-    expect(res).toBe("nf");
-    expect(seen!.entry).toBe("404");
-    expect((seen!.props as { status: number }).status).toBe(404);
+    return { c: c as unknown as Context, calls };
+  }
+
+  it("notFoundHandler renders the 404 entry with c.status(404)", async () => {
+    const { c, calls } = fakeContext();
+    expect(await notFoundHandler({ title: "Lost" })(c)).toBe("rendered");
+    expect(calls.render).toEqual({ entry: "404", data: { status: 404, message: "Not Found" } });
+    expect(calls.status).toBe(404);
+    expect(calls.head).toEqual({ title: "Lost" });
   });
 
-  it("errorHandler renders 500 entry and logs", async () => {
+  it("errorHandler renders the 500 entry, logs, and forwards the error's response headers", async () => {
     const logged: unknown[] = [];
-    const c = {
-      render: (entry: string, props: unknown) => ({ entry, props }),
-    };
-    const res = (await errorHandler({ entry: "oops", log: (e) => logged.push(e) })(
-      new Error("boom"),
-      c as unknown as Context,
-    )) as unknown as { entry: string; props: { status: number } };
-    expect(res.entry).toBe("oops");
-    expect(res.props.status).toBe(500);
+    const { c, calls } = fakeContext();
+    const err = Object.assign(new Error("boom"), { res: new Response(null, { headers: { "WWW-Authenticate": "Basic" } }) });
+    expect(await errorHandler({ entry: "oops", log: (e) => logged.push(e) })(err, c)).toBe("rendered");
+    expect(calls.render).toEqual({ entry: "oops", data: { status: 500, message: "Internal Server Error" } });
+    expect(calls.status).toBe(500);
+    expect(calls.headers["www-authenticate"]).toBe("Basic");
+    expect(calls.head).toBeUndefined();
     expect(logged.length).toBe(1);
   });
 

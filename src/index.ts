@@ -108,16 +108,36 @@ export type LayoutDataFor<L extends string> = L extends keyof LayoutDataMap ? La
  */
 export type LayoutDataOptions = { [L in Layout]?: LayoutDataLoader<LayoutDataFor<L>> };
 
-export type RenderProps<TData = Record<string, unknown>> = {
-  title?: string;
-  data?: TData;
-  /** HTTP status of the shell response. @default 200 */
-  status?: number;
-  /** Extra response headers merged into the shell response. */
-  headers?: Record<string, string>;
-  /** Per-page head tags, merged after the shell `head` option. */
-  head?: string | HeadProps;
+/**
+ * `c.setHead({ title, description, og, … })`: per-response `<head>` tags,
+ * set from the route before `c.render`. `title` wins over the page's
+ * `<svelte:head>` and `shell({ title })`; a description replaces the
+ * shell's. Never emits executable inline scripts (`extra` is raw HTML).
+ */
+export type HeadOptions = HeadProps & { title?: string };
+
+/** Per-request state the shell keeps on the Hono context (`c.setHead`, `c.status`). */
+type RequestState = { head?: HeadOptions; status?: number };
+const requestStates = new WeakMap<object, RequestState>();
+const stateOf = (c: object): RequestState => {
+  let state = requestStates.get(c);
+  if (!state) requestStates.set(c, (state = {}));
+  return state;
 };
+
+const LEGACY_RENDER_KEYS = new Set(["title", "data", "status", "headers", "head"]);
+const warnedLegacyRender = new Set<string>();
+
+/** `c.render(entry, { data, title, … })` was the 0.x shape; `data` is now the second argument itself. */
+function warnLegacyRenderShape(entryName: string, data: Record<string, unknown> | undefined): void {
+  if (!data || !("data" in data) || warnedLegacyRender.has(entryName)) return;
+  if (!Object.keys(data).every((key) => LEGACY_RENDER_KEYS.has(key))) return;
+  warnedLegacyRender.add(entryName);
+  console.warn(
+    `[hono-svelte] c.render("${entryName}", { data, … }) looks like the old call shape — the second argument IS the page data now: ` +
+      `c.render(entry, data). Set title/head with c.setHead(), status with c.status() and headers with c.header().`,
+  );
+}
 
 export type PrefetchMode = false | "hover" | "all";
 
@@ -180,9 +200,7 @@ export type ShellOptions = {
    * to client rendering (entry script) instead of a 500. @default false
    */
   ssrFallback?: boolean;
-  /** Default status when `c.render(entry)` omits it. @default 200 */
-  status?: number;
-  /** Default headers merged into every shell response. */
+  /** Default headers of every shell response; a header the route set with `c.header()` wins. */
   headers?: Record<string, string>;
   /**
    * Force prod/dev asset behavior. Defaults to auto-detect
@@ -216,7 +234,8 @@ export type ShellOptions = {
 export type LayoutDataLoader<TData = Record<string, unknown>> = (c: any) => TData | Response | Promise<TData | Response>;
 
 export type ShellContext = {
-  render: (entryName: string, props?: RenderProps) => Response | Promise<Response>;
+  render: (entryName: string, data?: Record<string, unknown>) => Response | Promise<Response>;
+  setHead: (head: HeadOptions) => void;
 };
 
 function isValidEntryName(entryName: string): boolean {
@@ -235,9 +254,9 @@ const DESCRIPTION_META = /<meta\b(?=[^>]*\bname=["']description["'])[^>]*>/gi;
 /**
  * One `<title>` / `<meta name="description">` per document, page first.
  * Browsers use the FIRST `<title>`, so the shell default used to beat the
- * page's `<svelte:head>`. Precedence: `c.render(entry, { title })` > the
+ * page's `<svelte:head>`. Precedence: `c.setHead({ title })` > the
  * page/layout `<svelte:head>` > `shell({ title })`; for the description,
- * the page (`<svelte:head>` or `props.head`) > `shell({ head })`.
+ * the page (`<svelte:head>` or `c.setHead`) > `shell({ head })`.
  */
 function resolveHeadConflicts(input: {
   shellTitle: string;
@@ -303,7 +322,7 @@ function serializePageData(
   try {
     json = JSON.stringify(data);
   } catch {
-    throw new Error("hono-svelte: props.data must be JSON-serializable");
+    throw new Error("hono-svelte: page data must be JSON-serializable");
   }
   if (json === undefined) return { json: "", html: "" };
   checkDataLimit(entryName, json, dataLimit);
@@ -471,7 +490,7 @@ const metaOf = (pages: Record<string, SsrPageLoader>): ManifestMeta => pages as 
  * apps get the typed one via the generated dts (`declare module "hono"`).
  */
 type SetEntryRenderer = (
-  renderer: (entryName: string, props?: RenderProps) => Response | Promise<Response>,
+  renderer: (entryName: string, data?: Record<string, unknown>) => Response | Promise<Response>,
 ) => void;
 
 export function shell(options: ShellOptions = {}) {
@@ -481,7 +500,6 @@ export function shell(options: ShellOptions = {}) {
   // `pages()` embeds the client build's manifest into the server build.
   const assetsOpt = options.assets ?? autoClientManifest ?? assetsBase;
   const head = options.head ?? "";
-  const defaultStatus = options.status ?? 200;
   const defaultHeaders = options.headers ?? {};
   const dataLimit = options.dataLimit ?? 102400;
   const strict = options.strict ?? true;
@@ -600,7 +618,16 @@ export function shell(options: ShellOptions = {}) {
     return out + `${LT}script type="module" src="${escapeAttr(src)}"${nAttr}>${LT}/script>`;
   }
 
-  async function renderEntry(c: any, entryName: string, props: RenderProps | undefined): Promise<Response> {
+  /** Shell default headers the route did not set itself (`c.header()` wins). */
+  function unsetDefaultHeaders(c: any): Record<string, string> {
+    const set = (c as { res: Response }).res.headers;
+    const out: Record<string, string> = {};
+    for (const [name, value] of Object.entries(defaultHeaders)) if (!set.has(name)) out[name] = value;
+    return out;
+  }
+
+  async function renderEntry(c: any, entryName: string, routeData: Record<string, unknown> | undefined): Promise<Response> {
+    warnLegacyRenderShape(entryName, routeData);
     if (!isValidEntryName(entryName)) {
       throw new Error(`hono-svelte: invalid entryName: ${JSON.stringify(entryName)}`);
     }
@@ -613,8 +640,9 @@ export function shell(options: ShellOptions = {}) {
     const page: PageInfo = { path: c.req.path, route: routeOf(c) };
     const nonce = resolveNonce(c);
     const nAttr = nonceAttr(nonce);
-    const status = props?.status ?? defaultStatus;
-    const data = await pageData(c, entryName, props?.data, status);
+    const state = stateOf(c);
+    const status = state.status ?? 200;
+    const data = await pageData(c, entryName, routeData, status);
     if (data instanceof Response) return data;
 
     let bodyHtml = "";
@@ -632,12 +660,13 @@ export function shell(options: ShellOptions = {}) {
     // Static pages ship no JS: layout data only feeds the server render, so
     // only the route's own `data` is embedded (layout data like a session
     // never lands in their HTML). Client-rendered pages need all of it.
-    const { html: dataHtml } = serializePageData(entryName, isSsr ? props?.data : data, ids.dataId, dataLimit);
+    const { html: dataHtml } = serializePageData(entryName, isSsr ? routeData : data, ids.dataId, dataLimit);
 
-    const pageHead = props?.head !== undefined ? renderHead(props.head) : "";
+    const { title: explicitTitle, ...headTags } = state.head ?? {};
+    const pageHead = state.head ? renderHead(headTags) : "";
     const resolvedHead = resolveHeadConflicts({
       shellTitle: titleDefault,
-      explicitTitle: props?.title,
+      explicitTitle,
       shellHead: head,
       ssrHead,
       pageHead,
@@ -656,8 +685,9 @@ export function shell(options: ShellOptions = {}) {
         `<body><div id="${ids.rootId}" ${PAGE_ATTRIBUTES.path}="${escapeAttr(page.path)}" ${PAGE_ATTRIBUTES.route}="${escapeAttr(page.route)}">${bodyHtml}</div>` +
         dataHtml +
         `</body></html>`,
-      status,
-      { ...defaultHeaders, ...props?.headers },
+      // Status comes from `c.status()` (hono's own); headers from `c.header()` plus the shell defaults.
+      undefined,
+      unsetDefaultHeaders(c),
     );
   }
 
@@ -671,7 +701,18 @@ export function shell(options: ShellOptions = {}) {
   // references is immune to any copy/version layout; the casts at the
   // render/setRenderer boundary carry the correctness burden.
   const middleware = async (c: any, next: Next): Promise<void> => {
-    (c as { setRenderer: SetEntryRenderer }).setRenderer((entryName, props) => renderEntry(c, entryName, props));
+    const state = stateOf(c);
+    (c as { setRenderer: SetEntryRenderer }).setRenderer((entryName, data) => renderEntry(c, entryName, data));
+    (c as ShellContext).setHead = (head) => {
+      state.head = { ...state.head, ...head };
+    };
+    // hono keeps the status private; mirror `c.status()` so the render knows
+    // it (error renders tolerate failing layoutData loaders).
+    const setStatus = c.status as (status: number) => void;
+    c.status = (status: number) => {
+      state.status = status;
+      setStatus(status);
+    };
     await next();
   };
 

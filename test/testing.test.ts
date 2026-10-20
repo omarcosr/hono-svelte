@@ -7,7 +7,7 @@ import Home from "./fixtures/pages/home.svelte";
 function app() {
   const a = new Hono();
   a.use("/*", shell({ strict: false, ssrPages: { home: async () => ({ default: Home }) } }));
-  a.get("/users/:id", (c) => c.render("admin", { data: { id: c.req.param("id"), note: `</script><b>"&"</b>` } }));
+  a.get("/users/:id", (c) => c.render("admin", { id: c.req.param("id"), note: `</script><b>"&"</b>` }));
   a.get("/", (c) => c.render("home"));
   return a;
 }

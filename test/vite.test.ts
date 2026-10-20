@@ -346,11 +346,11 @@ describe("pages() plugin", () => {
       const content = readFileSync(out, "utf8");
       expect(content).toContain("type HonoSvelteData_typed = { plan: string };");
       expect(content).toContain(
-        '(entryName: "typed", props?: import("hono-svelte").RenderProps<HonoSvelteData_typed>): Response | Promise<Response>;',
+        '(entryName: "typed", data: HonoSvelteData_typed): Response | Promise<Response>;',
       );
       // typed overload first; the catch-all stays last and excludes typed entries,
       // otherwise a wrong `data` would fall through to it unchecked
-      const catchAll = '(entryName: Exclude<HonoSvelteEntries, "typed">, props?: ';
+      const catchAll = '(entryName: Exclude<HonoSvelteEntries, "typed">, data?: ';
       expect(content).toContain(catchAll);
       expect(content.indexOf("HonoSvelteData_typed")).toBeLessThan(content.indexOf(catchAll));
     } finally {
@@ -397,7 +397,7 @@ describe("pages() plugin", () => {
       const content = readFileSync(out, "utf8");
       expect(content).toContain("interface HonoSvelteData_dash_index { seats: number };");
       expect(content).toContain(
-        '(entryName: "dash/index", props?: import("hono-svelte").RenderProps<HonoSvelteData_dash_index>): Response | Promise<Response>;',
+        '(entryName: "dash/index", data: HonoSvelteData_dash_index): Response | Promise<Response>;',
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -430,7 +430,7 @@ describe("pages() plugin", () => {
       expect(content).toContain(
         'type HonoSvelteData_dash_bms = { plan: import("../lib/plan").Plan; rows: import("$lib/db").Row[]; offer: import("@app/catalog").Offer };',
       );
-      expect(content).toContain('(entryName: "dash/bms", props?: import("hono-svelte").RenderProps<HonoSvelteData_dash_bms>)');
+      expect(content).toContain('(entryName: "dash/bms", data: HonoSvelteData_dash_bms)');
       expect(plugin.dataTypes()["dash/bms"]).toBe("type Data = { plan: Plan; rows: BmRow[]; offer: catalog.Offer };");
       expect(warn).not.toHaveBeenCalled();
     } finally {

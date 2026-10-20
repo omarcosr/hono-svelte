@@ -478,11 +478,15 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       // catch-all (Record<string, unknown>), and nothing is checked.
       ...typed.map(
         (p) =>
-          `    (entryName: ${JSON.stringify(p.entryName)}, props?: import("hono-svelte").RenderProps<${dataNames.get(p.entryName)}>): Response | Promise<Response>;`,
+          `    (entryName: ${JSON.stringify(p.entryName)}, data: ${dataNames.get(p.entryName)}): Response | Promise<Response>;`,
       ),
       `    (entryName: ${
         typed.length > 0 ? `Exclude<${typeName}, ${typed.map((p) => JSON.stringify(p.entryName)).join(" | ")}>` : typeName
-      }, props?: import("hono-svelte").RenderProps): Response | Promise<Response>;`,
+      }, data?: Record<string, unknown>): Response | Promise<Response>;`,
+      `  }`,
+      `  interface Context<E extends import("hono").Env = any, P extends string = any, I extends import("hono").Input = {}> {`,
+      `    /** Per-response <head> tags (title, description, og, …) for the page \`c.render\` emits next. */`,
+      `    setHead(head: import("hono-svelte").HeadOptions): void;`,
       `  }`,
       `}`,
       "",

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **BREAKING — `c.render(entry, data)` and `c.setHead(head)`.** The second
+  argument of `c.render` is the page data itself; `title`/`head` moved to
+  `c.setHead({ title, description, og, … })` (merges across calls), status
+  and headers are Hono's own `c.status()` / `c.header()`, which the shell
+  now respects (a shell default header never overrides one the route set).
+  `RenderProps` and `shell({ status })` are gone; the generated dts types
+  `c.render("x", data)` per page and declares `Context.setHead`. Migration:
+  `c.render(e, { data })` → `c.render(e, data)`; `{ title, head }` →
+  `c.setHead(…)`; `{ status, headers }` → `c.status()` / `c.header()`.
+  The old shape is detected and warned about once per entry.
+
 - **fix(vite): page analysis reads the Svelte AST** (`svelte/compiler`
   `parse`) instead of regexes: a `<script>` inside an HTML comment no longer
   turns a page into a client page, an `import` inside a string no longer trips
