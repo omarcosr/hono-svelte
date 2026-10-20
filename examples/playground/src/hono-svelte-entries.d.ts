@@ -7,6 +7,7 @@ declare module "hono-svelte" {
   interface Register {
     entries: HonoSvelteEntries;
     typedEntries: never;
+    layouts: "dashboard/layout";
   }
 }
 
