@@ -447,6 +447,7 @@ generic helpers with `UntypedEntry`, and render typed pages directly.
 ## Production tips
 
 - Pass the Vite manifest to `shell({ assets: manifest })` for hashed files — including the global stylesheet: with `styles: resolve("src/styles.css")` in the client input (or `stylesEntry` pointing at another file), its hashed name comes from the manifest, no hand-written `stylesHref`. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
+- `pages()` keeps `hono-svelte` itself bundled in the server build (`ssr.noExternal`, and taken out of any `build.rollupOptions.external` / `@hono/vite-build` `external` list): the shell reaches the pages through the plugin's virtual manifest, so an externalized copy would silently render with no static pages or layouts. Externalizing every other dependency (e.g. native modules) is fine.
 - Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
 - Theme attributes on the root element: `shell({ htmlAttributes: { "data-theme": "dark" } })` (DaisyUI), or a function reading a cookie for per-user themes.

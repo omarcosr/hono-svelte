@@ -126,6 +126,23 @@ type PageSpec = {
   dataImports: DataImport[];
 };
 
+const SELF = "hono-svelte";
+
+const isSelf = (id: string): boolean => id === SELF || id.startsWith(SELF + "/");
+
+type ExternalFn = (id: string, parent: string | undefined, isResolved: boolean) => boolean | null | undefined | void;
+type ExternalOption = string | RegExp | (string | RegExp)[] | ExternalFn;
+
+/** `external` with hono-svelte (and its subpaths) taken out; everything else unchanged. */
+function bundleSelf(external: ExternalOption): ExternalOption {
+  if (typeof external === "function") {
+    return (id, parent, isResolved) => (isSelf(id) ? false : external(id, parent, isResolved));
+  }
+  const list = Array.isArray(external) ? external : [external];
+  if (list.every((e) => typeof e === "string")) return list.filter((e) => !isSelf(e as string));
+  return (id) => !isSelf(id) && list.some((e) => (typeof e === "string" ? e === id : e.test(id)));
+}
+
 export function pages(options: PagesOptions = {}): PagesPlugin {
   const pagesDir = resolve(options.pagesDir ?? "src/pages");
   const ignore = options.ignore ?? DEFAULT_IGNORE;
@@ -492,6 +509,19 @@ function entryMountSource(page: PageSpec): string {
     // pre: must run BEFORE vite:resolve to intercept the shell's
     // relative import ("./ssr-manifest.js") and redirect it to the manifest.
     enforce: "pre",
+    // The shell only sees the pages through its relative "./ssr-manifest.js"
+    // import, which resolveId redirects to the virtual manifest — that works
+    // only while hono-svelte goes through the bundler. Externalized (Vite's
+    // default for SSR deps, or an app `external` list built from
+    // package.json), the server silently loads the empty stub: no static
+    // pages, no layouts. So the plugin keeps the package bundled itself.
+    config() {
+      return { ssr: { noExternal: [SELF] } };
+    },
+    options(input) {
+      if (input.external === undefined) return null;
+      return { ...input, external: bundleSelf(input.external as unknown as ExternalOption) as typeof input.external };
+    },
     configResolved(config) {
       viteRoot = config.root;
     },

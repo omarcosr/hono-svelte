@@ -48,6 +48,31 @@ describe("pages() plugin", () => {
     expect(manifest).toContain("__clientEntries");
   });
 
+  describe("keeps hono-svelte bundled", () => {
+    type Hook = (input: { external?: unknown }) => { external?: unknown } | null;
+    const external = (value: unknown) => ((makePlugin().options as unknown as Hook)({ external: value }) ?? {}).external;
+
+    it("SSR config marks the package noExternal", () => {
+      expect((makePlugin().config as unknown as () => unknown)()).toEqual({ ssr: { noExternal: ["hono-svelte"] } });
+    });
+
+    it("drops the package from string externals", () => {
+      expect(external(["argon2", "hono-svelte", "hono", "hono-svelte/page"])).toEqual(["argon2", "hono"]);
+      expect(external("hono-svelte")).toEqual([]);
+    });
+
+    it("wraps function and RegExp externals", () => {
+      const fn = external((id: string) => !id.startsWith(".")) as (id: string, p?: string, r?: boolean) => unknown;
+      expect([fn("hono-svelte"), fn("hono-svelte/page"), fn("hono"), fn("./x")]).toEqual([false, false, true, false]);
+      const re = external([/^hono/, "argon2"]) as (id: string) => boolean;
+      expect([re("hono-svelte"), re("hono"), re("argon2"), re("svelte")]).toEqual([false, true, true, false]);
+    });
+
+    it("leaves builds without external alone", () => {
+      expect((makePlugin().options as unknown as Hook)({})).toBeNull();
+    });
+  });
+
   it("virtual entry embeds the opaque ids and the mount", () => {
     const plugin = makePlugin();
     const ids = getIds("admin");
