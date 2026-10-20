@@ -144,24 +144,23 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
     const { svelte } = await loadPeer("@sveltejs/vite-plugin-svelte", "@sveltejs/vite-plugin-svelte");
     const plugins: PluginOption[] = [...extra, svelte(), appPages];
 
-    if (mode === "client") {
-      return {
-        plugins,
-        build: {
-          outDir,
-          emptyOutDir: true,
-          copyPublicDir: false,
-          manifest: true,
-          rollupOptions: {
-            input: appPages.input(),
-            output: {
-              entryFileNames: "static/[name]-[hash].js",
-              chunkFileNames: "static/chunks/[name]-[hash].js",
-              assetFileNames: "static/[name]-[hash][extname]",
-            },
-          },
+    const clientBuild = (): NonNullable<UserConfig["build"]> => ({
+      outDir,
+      emptyOutDir: true,
+      copyPublicDir: false,
+      manifest: true,
+      rollupOptions: {
+        input: appPages.input(),
+        output: {
+          entryFileNames: "static/[name]-[hash].js",
+          chunkFileNames: "static/chunks/[name]-[hash].js",
+          assetFileNames: "static/[name]-[hash][extname]",
         },
-      };
+      },
+    });
+
+    if (mode === "client") {
+      return { plugins, build: clientBuild() };
     }
 
     if (command === "serve") {
@@ -171,8 +170,20 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
     }
 
     const build = (await loadPeer(`@hono/vite-build/${runtime}`, "@hono/vite-build")).default;
+    const serverPlugins: PluginOption[] = [
+      ...plugins,
+      build({ entry, outputDir: "./" + outDir, staticRoot: "./" + outDir, ...options.build }),
+    ];
+    // Plain `vite build`: one run builds the client environment (hashed
+    // assets + manifest) and then the server bundle, which embeds that
+    // manifest. `vite build --mode client` / `--ssr` keep the split flow.
     return {
-      plugins: [...plugins, build({ entry, outputDir: "./" + outDir, staticRoot: "./" + outDir, ...options.build })],
+      plugins: serverPlugins,
+      builder: {},
+      environments: {
+        client: { consumer: "client", build: clientBuild() },
+        ssr: { consumer: "server" },
+      },
     };
   };
 

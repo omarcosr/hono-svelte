@@ -38,8 +38,10 @@ export default honoSvelte({ entry: "src/routes/index.ts" });
 two as dev dependencies (`@sveltejs/vite-plugin-svelte` too). Scripts:
 
 ```json
-{ "dev": "vite", "build": "vite build --mode client && vite build --mode production" }
+{ "dev": "vite", "build": "vite build", "start": "bun ./dist/index.js" }
 ```
+
+One `vite build` builds the client environment (hashed assets + manifest) and then the server bundle, which embeds that manifest. `vite build --mode client` still runs the client build alone.
 
 Prefer full control? `pages()` is the plugin underneath — see [Manual Vite config](#manual-vite-config).
 
@@ -355,6 +357,7 @@ Vite config factory (`hono-svelte/vite`): `export default honoSvelte({ … })`. 
 | `styles` | `"src/styles.css"` | Global stylesheet (`false` = none), forwarded as `pages({ stylesEntry })` — the shell picks it up on its own |
 | `runtime` | auto | `"bun"` or `"node"`: picks `@hono/vite-build/<runtime>` and the dev-server adapter. Auto = Bun when Vite runs under Bun, was started by `bun run`, or a `bun.lock` exists |
 | `outDir` | `"dist"` | Output of both builds (client assets + server bundle) |
+| — | — | Plain `vite build` builds the `client` environment then `ssr` (Vite environments); `--mode client` builds the client alone |
 | `plugins` | `[]` | Extra Vite plugins for every mode (Tailwind, …) |
 | `devServer` / `build` | — | Extra options forwarded to `@hono/vite-dev-server` / `@hono/vite-build` |
 

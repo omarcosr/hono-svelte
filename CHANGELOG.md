@@ -24,6 +24,11 @@
   layout's `Data`. New `Layout`, `LayoutDataFor`, `LayoutDataMap`,
   `LayoutDataOptions` types; `LayoutDataLoader<T>` is generic.
 
+- **feat(vite): one `vite build` with `honoSvelte()`.** The preset declares
+  the `client` and `ssr` Vite environments: a plain `vite build` builds the
+  hashed client assets, then the server bundle with the manifest embedded.
+  No more `build:client && build:server` scripts (`--mode client` still
+  builds the client alone).
 - **feat(vite): `honoSvelte()` config preset.** `export default honoSvelte({ entry })`
   replaces the three-branch Vite config: svelte plugin, `pages({ dts: true })`,
   client build (hashed assets + manifest) and `@hono/vite-dev-server` /

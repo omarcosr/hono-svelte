@@ -3,9 +3,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "bun run build:client && bun run build:server",
-    "build:client": "vite build --mode client",
-    "build:server": "vite build --mode production",
+    "build": "vite build",
     "typecheck": "tsc --noEmit",
     "start": "bun ./dist/index.js"
   },

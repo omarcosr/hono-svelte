@@ -35,9 +35,10 @@ declare module "hono" {
 
 const VITE_CONFIG = `import { honoSvelte } from "hono-svelte/vite";
 
-// One call covers the client build, the dev server and the server bundle.
-// Runtime (bun/node) is detected from the process running Vite; force it
-// with \`runtime: "node"\`. Extra plugins (Tailwind, …) go in \`plugins\`.
+// One call covers the client build, the dev server and the server bundle;
+// \`vite build\` runs both builds in one go. Runtime (bun/node) is detected
+// from the process running Vite (bun run / npm run); force it with
+// \`runtime: "node"\`. Extra plugins (Tailwind, …) go in \`plugins\`.
 export default honoSvelte({ entry: "src/routes/index.ts" });
 `;
 
@@ -51,9 +52,7 @@ const PACKAGE_JSON = `{
   },
   "scripts": {
     "dev": "vite",
-    "build": "bun run build:client && bun run build:server",
-    "build:client": "vite build --mode client",
-    "build:server": "vite build --mode production",
+    "build": "vite build",
     "typecheck": "tsc --noEmit",
     "start": "bun ./dist/index.js",
     "start:node": "node ./dist/index.js"
