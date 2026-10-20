@@ -4,6 +4,12 @@
 
 export type SharedIds = { rootId: string; dataId: string };
 
+/** Prefix of every id the shell emits (root element, data script). */
+export const ID_PREFIX = "r-";
+
+/** Source of a regex matching one shell id — keeps `testing.ts` in step with `getIds`. */
+export const ID_PATTERN = ID_PREFIX + "[0-9a-f]{8}";
+
 function hashString(input: string): string {
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
@@ -20,7 +26,7 @@ function hashString(input: string): string {
 
 export function getIds(entryName: string): SharedIds {
   return {
-    rootId: 'r-' + hashString(entryName + ':root'),
-    dataId: 'r-' + hashString(entryName + ':data'),
+    rootId: ID_PREFIX + hashString(entryName + ':root'),
+    dataId: ID_PREFIX + hashString(entryName + ':data'),
   };
 }

@@ -1,6 +1,6 @@
 // Test helpers: read what the shell put in a rendered document without
 // depending on its markup (opaque ids, attribute names, escaping).
-import { getIds } from "./ids.js";
+import { getIds, ID_PATTERN } from "./ids.js";
 import { PAGE_ATTRIBUTES } from "./page.js";
 
 export type RenderedPage<TData = Record<string, unknown>> = {
@@ -14,8 +14,8 @@ export type RenderedPage<TData = Record<string, unknown>> = {
   is: (entryName: string) => boolean;
 };
 
-const ROOT = /<div id="(r-[0-9a-f]{8})"([^>]*)>/;
-const DATA = /<script type="application\/json" id="(r-[0-9a-f]{8})">([\s\S]*?)<\/script>/;
+const ROOT = new RegExp(`<div id="(${ID_PATTERN})"([^>]*)>`);
+const DATA = new RegExp(`<script type="application/json" id="(${ID_PATTERN})">([\\s\\S]*?)</script>`);
 
 function unescapeAttr(value: string): string {
   return value.replace(/&lt;/g, "<").replace(/&quot;/g, '"').replace(/&amp;/g, "&");

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { getIds } from "../src/ids.js";
+import { getIds, ID_PATTERN } from "../src/ids.js";
 
 describe("getIds", () => {
+  it("ids match ID_PATTERN (the contract testing.ts relies on)", () => {
+    const re = new RegExp("^" + ID_PATTERN + "$");
+    const ids = getIds("dashboard/index");
+    expect(ids.rootId).toMatch(re);
+    expect(ids.dataId).toMatch(re);
+  });
+
   it("returns deterministic ids in r-<hex> format", () => {
     const first = getIds("dashboard");
     const second = getIds("dashboard");
