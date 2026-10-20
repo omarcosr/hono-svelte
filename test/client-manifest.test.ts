@@ -4,8 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 // What `pages()` puts in the server build's virtual manifest after a client build.
 vi.mock("../src/ssr-manifest.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/ssr-manifest.js")>()),
+  stylesEntry: "src/app.css",
   clientManifest: {
-    "src/styles.css": { file: "static/styles-abc.css" },
+    "src/app.css": { file: "static/styles-abc.css" },
     "virtual:hono-svelte/entry/admin": { file: "static/admin-123.js", isEntry: true, css: ["static/admin-9.css"] },
   },
 }));
@@ -25,6 +26,13 @@ describe("embedded client manifest", () => {
     expect(html).toContain('src="/static/admin-123.js"');
     expect(html).toContain('href="/static/styles-abc.css"');
     expect(html).toContain('href="/static/admin-9.css"');
+  });
+
+  it("pages({ stylesEntry }) is the shell's stylesEntry default", async () => {
+    const app = new Hono();
+    app.use("/*", shell({ isProd: false, strict: false }));
+    app.get("/", (c) => c.render("admin"));
+    expect(await (await app.request("/")).text()).toContain('href="/src/app.css"');
   });
 
   it("an explicit assets option still wins", async () => {
