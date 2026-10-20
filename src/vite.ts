@@ -209,7 +209,6 @@ const isSelf = (id: string): boolean => id === SELF || id.startsWith(SELF + "/")
 type ExternalFn = (id: string, parent: string | undefined, isResolved: boolean) => boolean | null | undefined | void;
 type ExternalOption = string | RegExp | (string | RegExp)[] | ExternalFn;
 
-/** `external` with hono-svelte (and its subpaths) taken out; everything else unchanged. */
 type SsrExternalConfig = {
   ssr?: { external?: unknown };
   environments?: Record<string, { resolve?: { external?: unknown } } | undefined>;
@@ -226,6 +225,7 @@ export function dropSelfFromSsrExternal(config: SsrExternalConfig): void {
   for (const env of Object.values(config.environments ?? {})) clean(env?.resolve);
 }
 
+/** `external` with hono-svelte (and its subpaths) taken out; everything else unchanged. */
 function bundleSelf(external: ExternalOption): ExternalOption {
   if (typeof external === "function") {
     return (id, parent, isResolved) => (isSelf(id) ? false : external(id, parent, isResolved));
