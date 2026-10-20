@@ -361,7 +361,7 @@ Vite config factory (`hono-svelte/vite`): `export default honoSvelte({ … })`. 
 |---|---|---|
 | `entry` | `"src/routes/index.ts"` | Server entry (the module exporting the Hono app) |
 | `styles` | `"src/styles.css"` | Global stylesheet (`false` = none), forwarded as `pages({ stylesEntry })` — the shell picks it up on its own |
-| `runtime` | auto | `"bun"` or `"node"`: picks `@hono/vite-build/<runtime>` and the dev-server adapter. Auto = Bun when Vite runs under Bun, was started by `bun run`, or a `bun.lock` exists |
+| `runtime` | auto | `"bun"` or `"node"`: picks `@hono/vite-build/<runtime>` and the dev-server adapter. Auto = Bun when Vite runs under Bun, was started by `bun run`, or a `bun.lock` exists. Pin it when the build and the server use different runtimes (`npm run build` + `bun dist/index.js`): a node bundle run under Bun fails with `Expected a Response object` |
 | `outDir` | `"dist"` | Output of both builds (client assets + server bundle) |
 | — | — | Plain `vite build` builds the `client` environment then `ssr` (Vite environments); `--mode client` builds the client alone |
 | `plugins` | `[]` | Extra Vite plugins for every mode (Tailwind, …) |
