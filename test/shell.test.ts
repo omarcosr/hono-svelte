@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { __resetDataLimitWarned, shell } from "../src/index.js";
+import { __resetDataLimitWarned, shell, type LayoutDataLoader } from "../src/index.js";
 import { getIds } from "../src/ids.js";
 import Home from "./fixtures/pages/home.svelte";
 import PropsPage from "./fixtures/_pages/props.svelte";
@@ -443,6 +443,66 @@ describe("shell", () => {
     expect(html.indexOf('class="layout"')).toBeLessThan(html.indexOf("Ada"));
     // single layout application: exactly one .layout wrapper
     expect(html.match(/class="layout"/g)?.length).toBe(1);
+  });
+
+  describe("layoutData", () => {
+    const dataLayout = async () => ({
+      default: (await import("./fixtures/_pages/data-layout.svelte")).default,
+    });
+    const dataOf = (html: string, entry: string) =>
+      JSON.parse(html.match(new RegExp(`id="${getIds(entry).dataId}">(.*?)<`))![1]);
+
+    function layoutApp(layoutData: Record<string, LayoutDataLoader>) {
+      const app = new Hono();
+      app.use(
+        "/*",
+        shell({
+          layoutData,
+          ssrPages: Object.assign(
+            { "dash/page": propsLoader },
+            { __layouts: { "dash/layout": dataLayout }, __clientEntries: [] },
+          ) as never,
+          strict: false,
+        }),
+      );
+      app.get("/static", (c) => c.render("dash/page", { data: { name: "Ada" } }));
+      app.get("/client", (c) => c.render("dash/client", { data: { name: "Ada" } }));
+      app.get("/outside", (c) => c.render("other/client"));
+      return app;
+    }
+
+    it("merges the chain's loaders under the route data (inner layout wins, route wins)", async () => {
+      const app = layoutApp({
+        layout: () => ({ user: "outer", name: "root", theme: "dark" }),
+        "dash/layout": async (c) => ({ user: c.req.header("x-user") ?? "nobody" }),
+      });
+      const html = await (await app.request("/client", { headers: { "x-user": "grace" } })).text();
+      expect(dataOf(html, "dash/client")).toEqual({ user: "grace", name: "Ada", theme: "dark" });
+    });
+
+    it("server-rendered layouts receive the loaded data", async () => {
+      const html = await (await layoutApp({ "dash/layout": () => ({ user: "grace" }) }).request("/static")).text();
+      expect(html).toContain('<nav class="who">grace</nav>');
+      expect(html).toContain("Ada");
+    });
+
+    it("pages outside the layout's directory don't run its loader", async () => {
+      let calls = 0;
+      const html = await (
+        await layoutApp({
+          "dash/layout": () => {
+            calls++;
+            return { user: "grace" };
+          },
+        }).request("/outside")
+      ).text();
+      expect(calls).toBe(0);
+      expect(html).not.toContain("application/json");
+    });
+
+    it("keys must be layout entries", () => {
+      expect(() => shell({ layoutData: { "dash/index": () => ({}) } })).toThrow(/not a layout entry/);
+    });
   });
 
   it("manual layout import fails fast at build time", async () => {

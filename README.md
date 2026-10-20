@@ -180,6 +180,25 @@ c.render("dashboard/page1", { data: { title: "Page 1", description: "..." } });
 <section class="card">Page 1 content</section>
 ```
 
+### Layout data
+
+Data every page under a layout needs (the session in a dashboard nav, the user's balance) belongs to the layout, not to each route. `shell({ layoutData })` maps a layout entry to a loader; every render under that layout runs it with the Hono context and merges the result into `data`:
+
+```ts
+app.use(
+  shell({
+    layoutData: {
+      "dashboard/layout": (c) => ({ session: publicSession(c.get("session")) }),
+    },
+  }),
+);
+
+// routes only pass what is theirs
+c.render("dashboard/orders", { data: { orders } });
+```
+
+Loaders of one chain run in parallel. On key clashes the inner layout wins over the outer one, and the route's own `data` wins over all of them. The merged object is what gets serialized, so client-rendered layouts and pages receive it too. A page `Data` type (typed `c.render`) should declare only what the route passes; a page that also reads layout data annotates its props with both, e.g. `let { orders, session }: Data & DashboardLayoutData = $props()`.
+
 > Pages must NOT import their layout manually — the shell applies it automatically. The plugin fails fast at build time (`manually imports ... but the layout is applied automatically`) instead of rendering `<main><div><main>` twice.
 
 Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect them; `layouts: false` restores legacy ignore).
