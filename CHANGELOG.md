@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - **BREAKING — `c.render(entry, data)` and `c.setHead(head)`.** The second
   argument of `c.render` is the page data itself; `title`/`head` moved to
