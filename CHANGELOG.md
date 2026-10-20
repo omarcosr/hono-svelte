@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **feat(vite): `honoSvelte()` config preset.** `export default honoSvelte({ entry })`
+  replaces the three-branch Vite config: svelte plugin, `pages({ dts: true })`,
+  client build (hashed assets + manifest) and `@hono/vite-dev-server` /
+  `@hono/vite-build` for the detected runtime (Bun/Node); `styles` is
+  forwarded as `pages({ stylesEntry })` and the client manifest is embedded
+  from `<outDir>/.vite/manifest.json`. The optional peers are resolved from
+  the app at config time. `pages()` stays for manual setups.
+- **feat(shell): layout slot wrappers are `display: contents`.** The per-level
+  `<div>` no longer takes part in flex/grid layout (SSR and client mount).
+- **feat(cli): scaffold uses `honoSvelte()`**, pins `hono-svelte` to the
+  CLI's own version instead of `latest`, and drops `src/env.d.ts` (the
+  generated dts is picked up by `tsconfig` `include`). `initFiles(flavor, { version })`.
+- **perf(vite):** page sources are re-read only when their mtime/size changed
+  (the dev watcher re-scans every page on each save).
+- `shell({ assetsBase })` is deprecated in favour of `assets`.
+
+- **fix(vite): the manual-layout-import guard only fires for the page's own
+  layouts.** It matched any import whose file was named `layout.svelte`
+  (`../_ui/layout.svelte`); the specifier is now resolved against the page
+  file and compared to the real layout paths.
+
 - **fix(vite): a page whose only script is `<script module>` stays static.**
   Declaring a per-page `Data` type turned a zero-JS page into a client page
   shipping a bundle; only an instance `<script>` makes a page interactive now.

@@ -15,7 +15,7 @@ Real sites and dashboards mix simple pages (landing, login, terms) with interact
 
 ## Installation
 
-Requires Bun 1.4+, Node 26+, Hono 4, Svelte 5, Vite 8, and TypeScript 7.
+Requires Bun 1.4+ or Node 24+, Hono 4, Svelte 5, Vite 8, and TypeScript 7.
 
 ```sh
 bun add hono-svelte
@@ -23,46 +23,25 @@ bun add hono-svelte
 
 ## Quick start
 
-**1. Configure Vite** — add the pages plugin in every mode and use the entry list in the client build:
+**1. Configure Vite** — one call covers the client build, the dev server and the server bundle:
 
 ```ts
-import build from "@hono/vite-build/node";
-import devServer from "@hono/vite-dev-server";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { pages } from "hono-svelte/vite";
-import { resolve } from "node:path";
-import { defineConfig } from "vite";
+// vite.config.ts
+import { honoSvelte } from "hono-svelte/vite";
 
-const appPages = pages();
-
-export default defineConfig(({ command, mode }) => {
-  if (mode === "client") {
-    return {
-      plugins: [svelte(), appPages],
-      build: {
-        rollupOptions: {
-          input: { ...appPages.input(), styles: resolve("src/styles.css") },
-          output: {
-            entryFileNames: "static/[name].js",
-            chunkFileNames: "static/chunks/[name]-[hash].js",
-            assetFileNames: "static/[name][extname]",
-          },
-        },
-      },
-    };
-  }
-
-  if (command === "serve") {
-    return {
-      plugins: [svelte(), appPages, devServer({ entry: "src/routes/index.ts" })],
-    };
-  }
-
-  return {
-    plugins: [svelte(), appPages, build({ entry: "src/routes/index.ts", staticRoot: "./dist" })],
-  };
-});
+export default honoSvelte({ entry: "src/routes/index.ts" });
 ```
+
+`honoSvelte()` wires `svelte()`, `pages({ dts: true })`, the client build
+(hashed files under `static/` + a manifest) and `@hono/vite-dev-server` /
+`@hono/vite-build` for the runtime it detects (Bun or Node). Install those
+two as dev dependencies (`@sveltejs/vite-plugin-svelte` too). Scripts:
+
+```json
+{ "dev": "vite", "build": "vite build --mode client && vite build --mode production" }
+```
+
+Prefer full control? `pages()` is the plugin underneath — see [Manual Vite config](#manual-vite-config).
 
 **2. Register the shell on the server:**
 
@@ -131,7 +110,7 @@ app.get("/dashboard", (c) => c.render("dashboard", { data: { plan: "pro" } }));
 Declare `export type Data` in the page's `<script module>` to type it per page — see [per-page data typing](#per-page-data-typing).
 
 Large payloads trigger a `console.warn` — once per page (default limit 100KB, `shell({ dataLimit })`).
-Anything sensitive stays in the API (`hc<AppType>`, HttpOnly cookie). Never put secrets in `data`.
+Anything sensitive, large, or frequently changing stays in the API, fetched after mount with the typed Hono client (`hc<AppType>`) — with the session in an `HttpOnly` cookie as usual. Never put secrets in `data`: it is visible in the HTML.
 
 ## Status, headers and per-page head
 
@@ -203,7 +182,7 @@ Loaders of one chain run in parallel. On key clashes the inner layout wins over 
 
 Layouts never become entries (`pages().layouts()` / `layoutChain(entry)` inspect them; `layouts: false` restores legacy ignore).
 
-> **Hydration wrapper:** each layout level wraps the page's SSR output in one `<div>` (a Svelte 5 raw-snippet requirement — an empty snippet render breaks hydration). The wrapper is hydration-safe, but it is part of the DOM: account for it in CSS selectors (e.g. `:global(> div)`).
+> **Slot wrapper:** each layout level wraps the page in one `<div style="display:contents">` (a Svelte 5 raw-snippet requirement — an empty snippet render breaks mounting). `display: contents` keeps it out of the layout flow, so flex/grid parents see the page content directly; it is still a DOM node for selectors. Under a CSP without `style-src 'unsafe-inline'` the inline style is ignored and the wrapper falls back to a plain block.
 
 
 ## Current page (`getPage`)
@@ -281,9 +260,9 @@ bunx hono-svelte init --full          # + auth, dashboard w/ layout, typed RPC
 cd my-app && bun install && bun run dev
 ```
 
-`init` scaffolds a complete runnable app: `package.json`, `tsconfig.json`,
-`vite.config.ts` (with `pages({ dts: true })`), `src/pages/` and
-`src/routes/`. The `--full` flavor adds cookie-session auth, a dashboard with
+`init` scaffolds a complete runnable app: `package.json` (pinned to the
+CLI's own hono-svelte version), `tsconfig.json`, a one-line
+`vite.config.ts` (`honoSvelte()`), `src/pages/` and `src/routes/`. The `--full` flavor adds cookie-session auth, a dashboard with
 nested layout, and a typed API (`hc<AppType>`) — open `/auth`, sign in, explore
 `/dashboard`. (npm/pnpm work too: `npx hono-svelte init`, `npm install`.)
 
@@ -298,7 +277,66 @@ hydrate on the client). Existing files are skipped, traversal names are
 refused, and the default pagesDir is `src/pages` (a custom one set via
 `pages({ pagesDir })` is not visible to the CLI — adjust the path manually).
 
+## Manual Vite config
+
+`honoSvelte()` is sugar over `pages()`. Without it, add the plugin in every mode and use the entry list in the client build:
+
+```ts
+import build from "@hono/vite-build/node";
+import devServer from "@hono/vite-dev-server";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { pages } from "hono-svelte/vite";
+import { resolve } from "node:path";
+import { defineConfig } from "vite";
+
+const appPages = pages({ dts: true });
+
+export default defineConfig(({ command, mode }) => {
+  if (mode === "client") {
+    return {
+      plugins: [svelte(), appPages],
+      build: {
+        manifest: true, // lets the server build embed the manifest (hashed assets, zero config)
+        rollupOptions: {
+          input: { ...appPages.input(), styles: resolve("src/styles.css") },
+          output: {
+            entryFileNames: "static/[name]-[hash].js",
+            chunkFileNames: "static/chunks/[name]-[hash].js",
+            assetFileNames: "static/[name]-[hash][extname]",
+          },
+        },
+      },
+    };
+  }
+
+  if (command === "serve") {
+    return {
+      plugins: [svelte(), appPages, devServer({ entry: "src/routes/index.ts" })],
+    };
+  }
+
+  return {
+    plugins: [svelte(), appPages, build({ entry: "src/routes/index.ts", staticRoot: "./dist" })],
+  };
+});
+```
+
 ## API
+
+### `honoSvelte(options?)`
+
+Vite config factory (`hono-svelte/vite`): `export default honoSvelte({ … })`. Accepts every `pages()` option (`dts` defaults to `true`) plus:
+
+| Option | Default | Description |
+|---|---|---|
+| `entry` | `"src/routes/index.ts"` | Server entry (the module exporting the Hono app) |
+| `styles` | `"src/styles.css"` | Global stylesheet (`false` = none), forwarded as `pages({ stylesEntry })` — the shell picks it up on its own |
+| `runtime` | auto | `"bun"` or `"node"`: picks `@hono/vite-build/<runtime>` and the dev-server adapter. Auto = Bun when Vite runs under Bun, was started by `bun run`, or a `bun.lock` exists |
+| `outDir` | `"dist"` | Output of both builds (client assets + server bundle) |
+| `plugins` | `[]` | Extra Vite plugins for every mode (Tailwind, …) |
+| `devServer` / `build` | — | Extra options forwarded to `@hono/vite-dev-server` / `@hono/vite-build` |
+
+The returned function exposes `.pages` (the underlying plugin). The optional peers are resolved from the app at config time, so an app that writes its own config never needs them.
 
 ### `shell(options?)`
 
@@ -309,8 +347,8 @@ Hono middleware that provides `c.render(entry, { title?, data?, status?, headers
 | `title` | `"App"` | Title used when neither `c.render(entry, { title })` nor the page's `<svelte:head>` provides one |
 | `lang` | `"en"` | `<html>` `lang` attribute |
 | `htmlAttributes` | — | Extra `<html>` attributes (`{ "data-theme": "dark" }`) or `(c) => attrs` per request; values escaped |
-| `assetsBase` | `"/static"` | Prefix for JS files in production (legacy; prefer `assets`) |
-| `assets` | `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url` (hashed files) |
+| `assetsBase` | `"/static"` | Deprecated — use `assets` |
+| `assets` | embedded manifest, else `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url`. When the client build emits a manifest (`build.manifest: true`, on with `honoSvelte()`), `pages()` embeds it in the server build and the shell uses it automatically |
 | `isProd` | auto | Force prod/dev asset behavior |
 | `stylesHref` | from `stylesEntry` | Global stylesheet href (or an `(isProd) => string` function); overrides `stylesEntry` |
 | `stylesEntry` | `"src/styles.css"` | Source of the global stylesheet: dev links `/<stylesEntry>`, prod resolves the hashed file from the manifest in `assets` (fallback `/static/styles.css`) |
@@ -374,12 +412,7 @@ Opt-in typed entry names — a typo fails `tsc` instead of 500ing at runtime:
 const appPages = pages({ dts: true }); // writes src/hono-svelte-entries.d.ts
 ```
 
-```ts
-// src/env.d.ts — the generated file carries the `declare module "hono"`
-// augmentation, so this file is only a reference. Remove any manual
-// `(entryName: string)` declaration or it will swallow the union.
- /// <reference path="./hono-svelte-entries.d.ts" />
-```
+The generated file carries the `declare module "hono"` augmentation; any `tsconfig` whose `include` covers it (`src/**/*`) picks it up — no reference directive needed. Remove any manual `(entryName: string)` declaration or it will swallow the union.
 
 ```ts
 // generated src/hono-svelte-entries.d.ts (commit it — CI needs no Vite run)
@@ -484,7 +517,7 @@ generic helpers with `UntypedEntry`, and render typed pages directly.
 
 ## Production tips
 
-- Hashed files: build the client (`manifest: true`) before the server and `pages()` embeds its manifest into the server bundle (`pages({ clientManifest })`, default `dist/.vite/manifest.json`) — `shell()` picks it up, no reading the file at startup. Passing `shell({ assets: manifest })` still works and wins. Either way the manifest covers the global stylesheet: declare it once with `pages({ stylesEntry: "src/app.css" })` — `appPages.input()` then includes it and the shell defaults to it — or keep `styles: resolve("src/styles.css")` in the client input (with `shell({ stylesEntry })` for another file); its hashed name comes from the manifest, no hand-written `stylesHref`. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
+- Hashed files: build the client (`manifest: true`) before the server — the order `honoSvelte()` and the scaffold scripts use — and `pages()` embeds its manifest into the server bundle (`pages({ clientManifest })`, default `dist/.vite/manifest.json`) — `shell()` picks it up, no reading the file at startup. Passing `shell({ assets: manifest })` still works and wins. Either way the manifest covers the global stylesheet: declare it once with `pages({ stylesEntry: "src/app.css" })` — `appPages.input()` then includes it and the shell defaults to it — or keep `styles: resolve("src/styles.css")` in the client input (with `shell({ stylesEntry })` for another file); its hashed name comes from the manifest, no hand-written `stylesHref`. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
 - `pages()` keeps `hono-svelte` itself bundled in the server build (`ssr.noExternal`, and taken out of any `build.rollupOptions.external` / `@hono/vite-build` `external` list): the shell reaches the pages through the plugin's virtual manifest, so an externalized copy would silently render with no static pages or layouts. Externalizing every other dependency (e.g. native modules) is fine.
 - Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
@@ -524,5 +557,3 @@ expect(page.route).toBe("/users/:id");      // same as getPage()
 ## License
 
 MIT — see [LICENSE](./LICENSE). Changelog in [CHANGELOG.md](./CHANGELOG.md).
-
-Anything sensitive, large, or frequently changing stays in the API, fetched after mount with the typed Hono client (`hc<AppType>`) — with the session in an `HttpOnly` cookie as usual. Never put secrets in `data`: it is visible in the HTML.
