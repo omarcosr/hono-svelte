@@ -157,8 +157,22 @@ describe("pages() plugin", () => {
     type Hook = (input: { external?: unknown }) => { external?: unknown } | null;
     const external = (value: unknown) => ((makePlugin().options as unknown as Hook)({ external: value }) ?? {}).external;
 
+    type ConfigHook = { order: string; handler: (config: Record<string, unknown>) => unknown };
+
     it("SSR config marks the package noExternal", () => {
-      expect((makePlugin().config as unknown as () => unknown)()).toEqual({ ssr: { noExternal: ["hono-svelte"] } });
+      const hook = makePlugin().config as unknown as ConfigHook;
+      expect(hook.order).toBe("post");
+      expect(hook.handler({})).toEqual({ ssr: { noExternal: ["hono-svelte"] } });
+    });
+
+    it("removes the package from ssr.external merged by other plugins (@hono/vite-build)", () => {
+      const config = {
+        ssr: { external: ["argon2", "hono-svelte", "hono-svelte/page", /^x/] },
+        environments: { ssr: { resolve: { external: ["hono-svelte", "mysql2"] } }, client: {} },
+      };
+      (makePlugin().config as unknown as ConfigHook).handler(config);
+      expect(config.ssr.external).toEqual(["argon2", /^x/]);
+      expect(config.environments.ssr.resolve.external).toEqual(["mysql2"]);
     });
 
     it("drops the package from string externals", () => {

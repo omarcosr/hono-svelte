@@ -209,6 +209,22 @@ const isSelf = (id: string): boolean => id === SELF || id.startsWith(SELF + "/")
 type ExternalFn = (id: string, parent: string | undefined, isResolved: boolean) => boolean | null | undefined | void;
 type ExternalOption = string | RegExp | (string | RegExp)[] | ExternalFn;
 
+type SsrExternalConfig = {
+  ssr?: { external?: unknown };
+  environments?: Record<string, { resolve?: { external?: unknown } } | undefined>;
+};
+
+/** Takes hono-svelte out of `ssr.external` / `environments.*.resolve.external` lists, in place. */
+export function dropSelfFromSsrExternal(config: SsrExternalConfig): void {
+  const clean = (holder: { external?: unknown } | undefined): void => {
+    if (holder && Array.isArray(holder.external)) {
+      holder.external = holder.external.filter((id) => typeof id !== "string" || !isSelf(id));
+    }
+  };
+  clean(config.ssr);
+  for (const env of Object.values(config.environments ?? {})) clean(env?.resolve);
+}
+
 /** `external` with hono-svelte (and its subpaths) taken out; everything else unchanged. */
 function bundleSelf(external: ExternalOption): ExternalOption {
   if (typeof external === "function") {
@@ -660,8 +676,16 @@ function entryMountSource(page: PageSpec): string {
     // default for SSR deps, or an app `external` list built from
     // package.json), the server silently loads the empty stub: no static
     // pages, no layouts. So the plugin keeps the package bundled itself.
-    config() {
-      return { ssr: { noExternal: [SELF] } };
+    // `order: "post"` sees what other plugins merged in: `@hono/vite-build`
+    // copies its `external` list into `ssr.external`, and an explicit
+    // `ssr.external` entry beats `noExternal` — so it is removed in place
+    // (a returned config would only be concatenated).
+    config: {
+      order: "post",
+      handler(config) {
+        dropSelfFromSsrExternal(config as SsrExternalConfig);
+        return { ssr: { noExternal: [SELF] } };
+      },
     },
     options(input) {
       if (input.external === undefined) return null;
