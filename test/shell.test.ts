@@ -527,6 +527,30 @@ describe("shell", () => {
     });
   });
 
+  it("importing a component that merely shares the layout file name is allowed", async () => {
+    const { pages } = await import("../src/vite.js");
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "hs-layout-name-"));
+    try {
+      mkdirSync(join(dir, "dash"), { recursive: true });
+      mkdirSync(join(dir, "_ui"), { recursive: true });
+      writeFileSync(join(dir, "dash", "layout.svelte"), "<div><slot /></div>\n");
+      writeFileSync(join(dir, "_ui", "layout.svelte"), "<section><slot /></section>\n");
+      writeFileSync(
+        join(dir, "dash", "page.svelte"),
+        '<script>import L from "../_ui/layout.svelte";</script><L><p>hi</p></L>\n',
+      );
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: process.cwd() } as never);
+      expect(() => plugin.buildStart()).not.toThrow();
+      expect(plugin.layoutChain("dash/page")).toEqual(["dash/layout"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("manual layout import fails fast at build time", async () => {
     const { pages } = await import("../src/vite.js");
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");

@@ -1,9 +1,9 @@
-import { existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { manifestKeysFor, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
-import { extractPageDataType, qualifyImports, type DataImport } from "./page-data.js";
+import { extractPageDataType, qualifyImports, type DataImport, type PageDataExtraction } from "./page-data.js";
 import {
   ENTRY_PREFIX,
   ENTRY_RESOLVED_PREFIX,
@@ -11,6 +11,9 @@ import {
   MANIFEST_RESOLVED,
 } from "./virtual.js";
 import { createFilter, type Plugin, type ViteDevServer } from "vite";
+
+export { detectRuntime, honoSvelte } from "./preset.js";
+export type { HonoSvelteConfig, HonoSvelteOptions, HonoSvelteRuntime } from "./preset.js";
 
 export type PagesOptions = {
   pagesDir?: string;
@@ -92,10 +95,6 @@ function normalizeSlashes(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * Server-rendered components (static pages and layouts) have no client
  * bundle, so their `<style>` must travel inside the SSR output. With
@@ -130,6 +129,45 @@ function hasInstanceScript(source: string): boolean {
 function entryNameFromFile(file: string): string {
   return normalizeSlashes(file).slice(0, -".svelte".length);
 }
+
+/** Relative import specifiers of a Svelte source (`import x from "./a"`, `import "./b"`). */
+function relativeImportSpecifiers(source: string): string[] {
+  const out: string[] = [];
+  for (const m of source.matchAll(/\bimport\s+(?:[^;'"]*?\bfrom\s+)?["']([^"']+)["']/g)) {
+    if (m[1].startsWith("./") || m[1].startsWith("../")) out.push(m[1]);
+  }
+  return out;
+}
+
+/** Path key for comparing files (Windows paths are case-insensitive). */
+function pathKey(p: string): string {
+  return process.platform === "win32" ? normalizeSlashes(p).toLowerCase() : normalizeSlashes(p);
+}
+
+/**
+ * The layout a page imports by hand, if any — the specifier is resolved
+ * against the page file and compared to the real layout paths, so a
+ * component that merely shares the name (`../ui/layout.svelte`) is fine.
+ */
+function importedLayout(imports: string[], pageAbsFile: string, layouts: LayoutSpec[]): LayoutSpec | null {
+  if (layouts.length === 0) return null;
+  const byPath = new Map(layouts.map((l) => [pathKey(l.absFile), l]));
+  for (const specifier of imports) {
+    const hit = byPath.get(pathKey(resolve(dirname(pageAbsFile), specifier)));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** What the plugin reads from a page source, cached by file mtime/size. */
+type SourceInfo = {
+  mtimeMs: number;
+  size: number;
+  hasScript: boolean;
+  /** Relative import specifiers (for the manual-layout-import guard). */
+  imports: string[];
+  extracted: PageDataExtraction;
+};
 
 type PageSpec = {
   entryName: string;
@@ -178,6 +216,24 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   let viteMode = "";
   let viteCommand = "";
   let lastWrittenDts: string | null = null;
+  const sourceCache = new Map<string, SourceInfo>();
+
+  /** Page source analysis, re-read only when the file changed (dev watcher re-scans every page). */
+  function sourceInfo(absFile: string): SourceInfo {
+    const st = statSync(absFile);
+    const hit = sourceCache.get(absFile);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit;
+    const source = readFileSync(absFile, "utf8");
+    const info: SourceInfo = {
+      mtimeMs: st.mtimeMs,
+      size: st.size,
+      hasScript: hasInstanceScript(source),
+      imports: relativeImportSpecifiers(source),
+      extracted: extractPageDataType(source),
+    };
+    sourceCache.set(absFile, info);
+    return info;
+  }
 
   /** Client manifest JSON to embed, or `null` (dev, disabled, or not built yet). */
   function clientManifestJson(): string | null {
@@ -245,27 +301,17 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       // Page inside LayoutN...Layout0 automatically (SSR or client mount). A page
       // that ALSO imports its layout manually would render it twice
       // (<main><div><main>). Fail fast with a clear message instead.
-      const source = readFileSync(absFile, "utf8");
-      if (layoutsEnabled && layouts.length > 0) {
-        for (const layout of layouts) {
-          const layoutFile = layout.endsWith("/layout")
-            ? layout.slice(0, -"/layout".length) + "/layout.svelte"
-            : "layout.svelte";
-          const base = layoutFile.split("/").pop() as string;
-          const importRe = new RegExp(
-            `import\\s+[^;]*["'][^"']*${escapeRegExp(base)}["']`,
-          );
-          if (importRe.test(source)) {
-            throw new Error(
-              `hono-svelte: page "${entryName}" manually imports "${layoutFile}", ` +
-                `but the layout is applied automatically (layoutChain: ${layouts.join(" -> ")}). ` +
-                `Remove the import and keep only the page content; ` +
-                `pass title/description via c.render(entry, { data }) if the layout needs them.`,
-            );
-          }
-        }
+      const info = sourceInfo(absFile);
+      const imported = importedLayout(info.imports, absFile, cachedLayouts);
+      if (imported && layouts.includes(imported.entryName)) {
+        throw new Error(
+          `hono-svelte: page "${entryName}" manually imports "${imported.file}", ` +
+            `but the layout is applied automatically (layoutChain: ${layouts.join(" -> ")}). ` +
+            `Remove the import and keep only the page content; ` +
+            `pass title/description via c.render(entry, { data }) if the layout needs them.`,
+        );
       }
-      const hasScript = hasInstanceScript(source);
+      const hasScript = info.hasScript;
       // A page is static when it has no <script> — EVEN with layouts.
       // The shell SSRs the page and wraps it in the layout chain; the layout
       // files themselves are compiled into the page's client entry only when
@@ -274,9 +320,8 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       // Per-page typed data: `export type Data` / `interface Data` in a
       // <script module> feeds a typed overload in the generated dts. Types it
       // imports are carried along as `import("…")` queries (see dataDeclaration).
-      const extracted = extractPageDataType(source);
-      const dataType = extracted.declaration ?? undefined;
-      result.push({ entryName, file, absFile, isStatic, layouts, dataType, dataImports: extracted.imports });
+      const dataType = info.extracted.declaration ?? undefined;
+      result.push({ entryName, file, absFile, isStatic, layouts, dataType, dataImports: info.extracted.imports });
     }
     return result;
   }
@@ -539,7 +584,7 @@ function entryMountSource(page: PageSpec): string {
     const lines = [
       "if (target) {",
       "  const slot = (C, p) => createRawSnippet(() => ({",
-      "    render: () => \"<div></div>\",",
+      "    render: () => \"<div style=\\\"display:contents\\\"></div>\",",
       "    setup: (el) => { mount(C, { target: el, props: p, context }); },",
       "  }));",
       "  let children = slot(Page, props);",
@@ -635,6 +680,7 @@ function entryMountSource(page: PageSpec): string {
         if (isPagePath(file)) onMaybeStructural();
       });
       server.watcher.on("unlink", (file) => {
+        sourceCache.delete(file);
         if (isPagePath(file)) onMaybeStructural();
       });
       server.watcher.on("change", (file) => {
@@ -744,4 +790,3 @@ function entryMountSource(page: PageSpec): string {
 
   return plugin;
 }
-
