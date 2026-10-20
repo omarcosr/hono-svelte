@@ -48,6 +48,77 @@ describe("pages() plugin", () => {
     expect(manifest).toContain("__clientEntries");
   });
 
+  describe("clientManifest", () => {
+    const CLIENT = { "src/styles.css": { file: "static/styles-1.css" }, admin: { file: "static/admin-2.js", isEntry: true } };
+
+    function buildPlugin(command: string, opts: { clientManifest?: string | false; write?: string } = {}) {
+      const root = mkdtempSync(join(tmpdir(), "hs-client-manifest-"));
+      mkdirSync(join(root, "pages"));
+      writeFileSync(join(root, "pages", "home.svelte"), "<h1>home</h1>\n");
+      const target = join(root, opts.write ?? "dist/.vite/manifest.json");
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, JSON.stringify(CLIENT));
+      const { write: _write, ...pluginOpts } = opts;
+      const plugin = pages({ pagesDir: join(root, "pages"), ...pluginOpts });
+      plugin.configResolved({ root, command } as never);
+      plugin.buildStart();
+      return { source: plugin.load(MANIFEST_RESOLVED) as string, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+    }
+
+    it("vite build embeds the client build's manifest", () => {
+      const { source, cleanup } = buildPlugin("build");
+      try {
+        expect(source).toContain(`export const clientManifest = ${JSON.stringify(CLIENT)};`);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("dev, a disabled option or a missing file embed null", () => {
+      for (const run of [
+        buildPlugin("serve"),
+        buildPlugin("build", { clientManifest: false }),
+        buildPlugin("build", { clientManifest: "out/manifest.json" }),
+      ]) {
+        try {
+          expect(run.source).toContain("export const clientManifest = null;");
+        } finally {
+          run.cleanup();
+        }
+      }
+    });
+
+    it("warns when the manifest misses a client page (stale client build)", () => {
+      const root = mkdtempSync(join(tmpdir(), "hs-client-manifest-stale-"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        mkdirSync(join(root, "pages"));
+        writeFileSync(join(root, "pages", "admin.svelte"), "<script>let n = 1;</script><p>{n}</p>\n");
+        writeFileSync(join(root, "pages", "fresh.svelte"), "<script>let n = 2;</script><p>{n}</p>\n");
+        mkdirSync(join(root, "dist/.vite"), { recursive: true });
+        writeFileSync(join(root, "dist/.vite/manifest.json"), JSON.stringify(CLIENT));
+        const plugin = pages({ pagesDir: join(root, "pages") });
+        plugin.configResolved({ root, command: "build" } as never);
+        plugin.buildStart();
+        plugin.load(MANIFEST_RESOLVED);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]?.[0])).toMatch(/no chunk for "fresh"/);
+      } finally {
+        warn.mockRestore();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("a custom path is read relative to the Vite root", () => {
+      const { source, cleanup } = buildPlugin("build", { clientManifest: "out/m.json", write: "out/m.json" });
+      try {
+        expect(source).toContain(`"static/admin-2.js"`);
+      } finally {
+        cleanup();
+      }
+      });
+    });
+
   describe("keeps hono-svelte bundled", () => {
     type Hook = (input: { external?: unknown }) => { external?: unknown } | null;
     const external = (value: unknown) => ((makePlugin().options as unknown as Hook)({ external: value }) ?? {}).external;
