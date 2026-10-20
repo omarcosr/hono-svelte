@@ -97,7 +97,11 @@ jobs:
       - run: npm install
       - run: npm run build
       - run: node dist/cli.js init --full --app=.tmp-app
-      - run: npm install hono-svelte@file:../.. --no-fund --no-audit
+      # init pins hono-svelte to the CLI's own version, which is not on the
+      # registry yet when this runs on a release commit: point it at the repo.
+      - run: npm pkg set dependencies.hono-svelte=file:../..
+        working-directory: .tmp-app
+      - run: npm install --no-fund --no-audit
         working-directory: .tmp-app
       - run: npm run typecheck
         working-directory: .tmp-app
