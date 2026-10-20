@@ -201,6 +201,38 @@ describe("handlers", () => {
       expect([boom.status, await boom.json()]).toEqual([500, { message: "Internal Server Error" }]);
     });
 
+    it("jsonBody shapes the JSON answer and receives the thrown error", async () => {
+      class CodedError extends HTTPException {
+        code = "reauth";
+      }
+      const seen: (Error | undefined)[] = [];
+      const jsonBody = ({ message }: { message: string }, err?: Error) => {
+        seen.push(err);
+        return { message, code: err instanceof CodedError ? err.code : undefined, ok: false };
+      };
+      const a = new Hono();
+      a.use("/*", shell({ strict: false }));
+      a.notFound(notFoundHandler({ json: isApi, jsonBody }));
+      a.onError(errorHandler({ json: isApi, jsonBody, log: false }));
+      a.get("/api/coded", () => {
+        throw new CodedError(403, { message: "Faça login novamente" });
+      });
+      a.get("/coded", () => {
+        throw new CodedError(403, { message: "Faça login novamente" });
+      });
+
+      const coded = await a.request("/api/coded");
+      expect([coded.status, await coded.json()]).toEqual([403, { message: "Faça login novamente", code: "reauth", ok: false }]);
+      expect(seen[0]).toBeInstanceOf(CodedError);
+
+      const notFound = await a.request("/api/nope");
+      expect([notFound.status, await notFound.json()]).toEqual([404, { message: "Not Found", ok: false }]);
+      expect(seen[1]).toBeUndefined();
+
+      // Pages are untouched: still the error document with { status, message }.
+      expect(dataOf(await (await a.request("/coded")).text())).toEqual({ status: 403, message: "Faça login novamente" });
+    });
+
     it("message, expose and data are configurable", async () => {
       const { app: a } = app({ message: "Erro interno", expose: () => false, data: { support: "x@y.z" } });
       expect(dataOf(await (await a.request("/gone")).text())).toEqual({ status: 410, message: "Erro interno", support: "x@y.z" });
