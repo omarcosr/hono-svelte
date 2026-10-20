@@ -241,18 +241,25 @@ describe("handlers", () => {
 });
 
 describe("scaffold", () => {
-  it("initFiles scaffolds env, vite config and index page", () => {
+  it("initFiles scaffolds dts stub, vite config and index page", () => {
     const files = initFiles();
     const paths = files.map((f) => f.path);
     expect(paths).toContain("package.json");
     expect(paths).toContain("tsconfig.json");
-    expect(paths).toContain("src/env.d.ts");
     expect(paths).toContain("src/hono-svelte-entries.d.ts");
     expect(paths).toContain("vite.config.ts");
     expect(paths).toContain("src/pages/index.svelte");
     expect(paths).toContain("src/pages/hello.svelte");
     expect(paths).toContain("src/routes/index.ts");
     expect(files.every((f) => f.skipIfExists)).toBe(true);
+    expect(paths).not.toContain("src/env.d.ts");
+    const vite = files.find((f) => f.path === "vite.config.ts")?.content ?? "";
+    expect(vite).toContain('honoSvelte({ entry: "src/routes/index.ts" })');
+    const pkg = files.find((f) => f.path === "package.json")?.content ?? "";
+    expect(pkg).toContain('"hono-svelte": "latest"');
+    expect(initFiles("minimal", { version: "^0.8.0" }).find((f) => f.path === "package.json")?.content).toContain(
+      '"hono-svelte": "^0.8.0"',
+    );
   });
 
   it("initFiles --full adds auth, dashboard, layout and typed RPC", () => {

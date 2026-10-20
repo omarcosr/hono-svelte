@@ -2,7 +2,7 @@
 // Thin CLI wrapper: `hono-svelte init` / `hono-svelte doctor`.
 // Compiled to `dist/cli.js` and invoked via the `hono-svelte` bin.
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -30,8 +30,22 @@ function hasFlag(name: string): boolean {
 const appRoot = flagValue("app") ?? process.cwd();
 const flavor: InitFlavor = hasFlag("full") ? "full" : "minimal";
 
+function packageRootForCli(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+/** Pin the scaffolded app to the CLI's own version (`^x.y.z`), never a floating "latest". */
+function ownVersionRange(): string | undefined {
+  try {
+    const pkg = JSON.parse(readFileSync(join(packageRootForCli(), "package.json"), "utf8")) as { version?: string };
+    return pkg.version ? `^${pkg.version}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function init(): void {
-  const files = initFiles(flavor);
+  const files = initFiles(flavor, { version: ownVersionRange() });
   for (const file of files) {
     const dest = join(appRoot, file.path);
     if (!isSafeAppPath(appRoot, dest)) {
@@ -56,10 +70,6 @@ function init(): void {
     console.log(`  1. bun install`);
     console.log(`  2. bun run dev   (or: bun --bun run dev)   →  /auth → /dashboard`);
   }
-}
-
-function packageRootForCli(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
 function addPage(): void {
