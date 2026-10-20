@@ -44,7 +44,7 @@ export { getIds } from "./ids.js";
 export type { PageInfo } from "./page.js";
 export type { SharedIds } from "./ids.js";
 export { checkAppLink, doctorChecks, initFiles, isSafeAppPath, isValidPageName, newPageFile } from "./scaffold.js";
-export type { DoctorIssue, DoctorOptions, InitFile, InitFlavor } from "./scaffold.js";
+export type { DoctorIssue, DoctorOptions, InitFile, InitFlavor, InitOptions } from "./scaffold.js";
 
 // Template rule (server -> svelte):
 // - data: small, public, and serializable - embedded in the initial HTML
@@ -107,12 +107,13 @@ export type PrefetchMode = false | "hover" | "all";
 export type ShellOptions = {
   title?: string;
   lang?: string;
+  /** @deprecated Use `assets` (a prefix string, manifest or resolver). Removed in 1.0. */
   assetsBase?: string;
   /**
    * Resolve the client JS URL for an entry.
    * - String: base prefix (`/static` -> `/static/<entry>.js`).
    * - Vite manifest object or resolver function: hashed files.
-   * @default "/static"
+   * @default the client manifest embedded by `pages()` in the server build, else "/static"
    */
   assets?: string | ViteManifest | AssetsResolver;
   /** Extra CSS links per HTML response. Strings are hrefs verbatim. */
@@ -427,7 +428,7 @@ async function renderSsrBody(
   // and an empty render breaks it ("Cannot set properties of null").
   for (const layoutMod of layoutMods.reverse()) {
     const childHtml = html;
-    const children = createRawSnippet(() => ({ render: () => `<div>${childHtml}</div>` }));
+    const children = createRawSnippet(() => ({ render: () => `<div style="display:contents">${childHtml}</div>` }));
     const wrapped = renderWith(layoutMod.default, { ...data, children });
     html = bodyOf(wrapped);
     head = headOf(wrapped) + head;
