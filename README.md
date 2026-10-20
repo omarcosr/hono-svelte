@@ -461,6 +461,20 @@ generic helpers with `UntypedEntry`, and render typed pages directly.
 cd examples/playground && bun install && bun run build
 ```
 
+## Testing your routes
+
+`hono-svelte/testing` reads a rendered document back, so route tests assert on what the page received instead of on the shell's markup (opaque ids, escaping):
+
+```ts
+import { readPage } from "hono-svelte/testing";
+
+const res = await app.request("/users/7");
+const page = readPage<{ user: User }>(await res.text());
+expect(page.is("users/detail")).toBe(true); // which entry rendered
+expect(page.data?.user.id).toBe(7);         // c.render data (+ layout data)
+expect(page.route).toBe("/users/:id");      // same as getPage()
+```
+
 ## Testing
 
 - `npm test` — unit + integration suite (vitest, real `vite build --ssr` included), with coverage thresholds.
