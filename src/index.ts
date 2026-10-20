@@ -10,7 +10,7 @@ import {
 import { escapeAttr } from "./escape.js";
 import { renderHead, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
-import { layoutChain } from "./layouts.js";
+import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
 import {
   allEntries as autoAllEntries,
@@ -178,7 +178,19 @@ export type ShellOptions = {
    * invalid attribute names throw.
    */
   htmlAttributes?: Record<string, string> | ((c: unknown) => Record<string, string>);
+  /**
+   * Data loaders per layout, keyed by layout entry name (`"layout"`,
+   * `"dashboard/layout"`). Every render of a page under that layout runs the
+   * loader with the Hono context and merges its result into `data` — the
+   * layout (and the page) receive it without each route spreading it by hand.
+   * Loaders of one chain run in parallel; on key clashes inner layouts win
+   * over outer ones and the route's own `data` wins over all of them.
+   */
+  layoutData?: Record<string, LayoutDataLoader>;
 };
+
+/** Loader for `shell({ layoutData })`; the context is the request's Hono context. */
+export type LayoutDataLoader = (c: any) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
 export type ShellContext = {
   render: (entryName: string, props?: RenderProps) => Response | Promise<Response>;
@@ -487,6 +499,24 @@ export function shell(options: ShellOptions = {}) {
     (known ?? []).filter((e) => e !== entry && !isSsrEntry(e)).map((e) => ({ entry: e, url: prodUrl(e) })),
   );
 
+  const layoutDataLoaders = options.layoutData ?? {};
+  for (const name of Object.keys(layoutDataLoaders)) {
+    if (!isLayoutEntry(name)) {
+      throw new Error(`hono-svelte: layoutData key ${JSON.stringify(name)} is not a layout entry ("layout" or "<dir>/layout")`);
+    }
+  }
+  const layoutDataChain = memoByEntry((entry) =>
+    layoutChain(entry, Object.keys(layoutDataLoaders)).map((name) => layoutDataLoaders[name] as LayoutDataLoader),
+  );
+
+  /** Layout data (outermost first, inner wins) under the route's own `data`. */
+  async function pageData(c: any, entryName: string, data: Record<string, unknown> | undefined) {
+    const loaders = layoutDataChain(entryName);
+    if (loaders.length === 0) return data;
+    const parts = await Promise.all(loaders.map((load) => load(c)));
+    return Object.assign({}, ...parts, data) as Record<string, unknown>;
+  }
+
   const htmlAttributes = (c: unknown): string => {
     const attrs = typeof options.htmlAttributes === "function" ? options.htmlAttributes(c) : options.htmlAttributes;
     return attrs ? renderAttributes(attrs) : "";
@@ -540,14 +570,15 @@ export function shell(options: ShellOptions = {}) {
     const page: PageInfo = { path: c.req.path, route: routeOf(c) };
     const nonce = resolveNonce(c);
     const nAttr = nonceAttr(nonce);
-    const { html: dataHtml } = serializePageData(entryName, props?.data, ids.dataId, dataLimit);
+    const data = await pageData(c, entryName, props?.data);
+    const { html: dataHtml } = serializePageData(entryName, data, ids.dataId, dataLimit);
 
     let bodyHtml = "";
     let ssrHead = "";
     if (isSsr) {
       try {
         const loader = ssrPages[entryName] as SsrPageLoader;
-        ({ html: bodyHtml, head: ssrHead } = await renderSsrBody(loader, layoutLoaders(entryName), props?.data, nonce, page));
+        ({ html: bodyHtml, head: ssrHead } = await renderSsrBody(loader, layoutLoaders(entryName), data, nonce, page));
       } catch (err) {
         if (!ssrFallback) throw err;
         console.error(`[hono-svelte] SSR failed for "${entryName}" — falling back to client rendering:`, err);
