@@ -6,6 +6,7 @@ export type HonoSvelteEntries = "auth" | "dashboard/index" | "dashboard/page1" |
 declare module "hono-svelte" {
   interface Register {
     entries: HonoSvelteEntries;
+    typedEntries: never;
   }
 }
 
