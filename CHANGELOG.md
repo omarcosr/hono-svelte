@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **fix(vite): page analysis reads the Svelte AST** (`svelte/compiler`
+  `parse`) instead of regexes: a `<script>` inside an HTML comment no longer
+  turns a page into a client page, an `import` inside a string no longer trips
+  the manual-layout guard. A page that does not parse fails the scan with its
+  path. `analyzeSource()` is exported from `hono-svelte/vite`.
+
 - **fix(assets): hashed entries resolve when the Vite root is not the cwd.**
   Vite writes virtual entries to the manifest relative to the root
   (`../../virtual:hono-svelte/entry/x`); the shell only knew the exact ids

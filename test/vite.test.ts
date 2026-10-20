@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { getIds } from "../src/ids.js";
 import { MANIFEST_RESOLVED, MANIFEST_ID, ENTRY_PREFIX } from "../src/virtual.js";
-import { pages, withInjectedCss } from "../src/vite.js";
+import { analyzeSource, pages, withInjectedCss } from "../src/vite.js";
 import { newPageFile } from "../src/scaffold.js";
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -16,6 +16,40 @@ function makePlugin() {
   plugin.buildStart();
   return plugin;
 }
+
+describe("analyzeSource", () => {
+  it("reads the Svelte AST: commented-out scripts and imports inside strings do not count", () => {
+    const commented = analyzeSource('<!-- <script>let x = 1;</script> -->\n<p>static</p>\n');
+    expect(commented.hasScript).toBe(false);
+    const inString = analyzeSource('<script lang="ts">const s = \'import L from "./layout.svelte"\';</script>\n');
+    expect(inString.hasScript).toBe(true);
+    expect(inString.imports).toEqual([]);
+    const real = analyzeSource(
+      '<script module lang="ts">\n  import type { Row } from "../db";\n  export type Data = { rows: Row[] };\n</script>\n<script lang="ts">\n  import Nav from "./nav.svelte";\n  import { x } from "$lib/x";\n</script>\n',
+    );
+    expect(real.hasScript).toBe(true);
+    expect(real.imports).toEqual(["../db", "./nav.svelte"]);
+    expect(real.extracted.declaration).toBe("type Data = { rows: Row[] };");
+    expect(real.extracted.imports.map((i) => i.specifier)).toEqual(["../db"]);
+  });
+
+  it("a module-only script keeps the page static", () => {
+    expect(analyzeSource('<script module lang="ts">\n  export type Data = { a: 1 };\n</script>\n<p>x</p>\n').hasScript).toBe(false);
+    expect(analyzeSource('<script context="module">\n  export const n = 1;\n</script>\n<p>x</p>\n').hasScript).toBe(false);
+  });
+
+  it("a page that does not parse fails the scan with its path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-bad-page-"));
+    try {
+      writeFileSync(join(dir, "broken.svelte"), "<script>let x = ;</script>\n");
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: dir } as never);
+      expect(() => plugin.buildStart()).toThrowError(/could not parse .*broken\.svelte/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("pages() plugin", () => {
   it("detects static vs client and ignores partials", () => {

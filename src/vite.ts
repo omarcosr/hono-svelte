@@ -3,13 +3,20 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { manifestKeyFor, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
-import { extractPageDataType, qualifyImports, type DataImport, type PageDataExtraction } from "./page-data.js";
+import {
+  extractDataFromModuleScript,
+  extractPageDataType,
+  qualifyImports,
+  type DataImport,
+  type PageDataExtraction,
+} from "./page-data.js";
 import {
   ENTRY_PREFIX,
   ENTRY_RESOLVED_PREFIX,
   MANIFEST_ID,
   MANIFEST_RESOLVED,
 } from "./virtual.js";
+import { parse } from "svelte/compiler";
 import { createFilter, type Plugin, type ViteDevServer } from "vite";
 
 export { detectRuntime, honoSvelte } from "./preset.js";
@@ -121,29 +128,35 @@ export function withInjectedCss(source: string): string {
   );
 }
 
-/**
- * A page needs client JS when it has an instance `<script>`. A module script
- * (`<script module>` / legacy `context="module"`) alone — the usual home of
- * the per-page `Data` type — runs no per-component code: the page stays static.
- */
-function hasInstanceScript(source: string): boolean {
-  for (const m of source.matchAll(/<script\b([^>]*)>/gi)) {
-    if (!/\bmodule\b|\bcontext\s*=\s*["']module["']/i.test(m[1])) return true;
-  }
-  return false;
-}
-
 function entryNameFromFile(file: string): string {
   return normalizeSlashes(file).slice(0, -".svelte".length);
 }
 
-/** Relative import specifiers of a Svelte source (`import x from "./a"`, `import "./b"`). */
-function relativeImportSpecifiers(source: string): string[] {
-  const out: string[] = [];
-  for (const m of source.matchAll(/\bimport\s+(?:[^;'"]*?\bfrom\s+)?["']([^"']+)["']/g)) {
-    if (m[1].startsWith("./") || m[1].startsWith("../")) out.push(m[1]);
-  }
-  return out;
+type ScriptNode = { content: { start: number; end: number; body: unknown[] } } | null | undefined;
+
+const relativeSpecifiers = (body: unknown[]): string[] =>
+  body.flatMap((node) => {
+    const n = node as { type?: string; source?: { value?: unknown } };
+    const value = n.type === "ImportDeclaration" ? n.source?.value : undefined;
+    return typeof value === "string" && (value.startsWith("./") || value.startsWith("../")) ? [value] : [];
+  });
+
+/**
+ * What the plugin needs from a page source, read from the Svelte AST so a
+ * `<script>` inside an HTML comment or an `import` inside a string cannot
+ * fool it. A page needs client JS when it has an instance `<script>`; a
+ * module script alone (`<script module>` / legacy `context="module"`, the
+ * home of the per-page `Data` type) runs no per-component code.
+ */
+export function analyzeSource(source: string): { hasScript: boolean; imports: string[]; extracted: PageDataExtraction } {
+  const ast = parse(source, { modern: true }) as { instance?: ScriptNode; module?: ScriptNode };
+  const instance = ast.instance;
+  const module = ast.module;
+  const imports = [...relativeSpecifiers(module?.content.body ?? []), ...relativeSpecifiers(instance?.content.body ?? [])];
+  const extracted = module
+    ? extractDataFromModuleScript(source.slice(module.content.start, module.content.end))
+    : extractPageDataType(source);
+  return { hasScript: Boolean(instance), imports, extracted };
 }
 
 /** Path key for comparing files (Windows paths are case-insensitive). */
@@ -231,13 +244,15 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     const hit = sourceCache.get(absFile);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit;
     const source = readFileSync(absFile, "utf8");
-    const info: SourceInfo = {
-      mtimeMs: st.mtimeMs,
-      size: st.size,
-      hasScript: hasInstanceScript(source),
-      imports: relativeImportSpecifiers(source),
-      extracted: extractPageDataType(source),
-    };
+    let analysis: ReturnType<typeof analyzeSource>;
+    try {
+      analysis = analyzeSource(source);
+    } catch (err) {
+      // A page that does not parse is reported by the svelte plugin with a
+      // proper frame; the scan must not be the one to fail first.
+      throw new Error(`hono-svelte: could not parse ${absFile}: ${(err as Error).message}`);
+    }
+    const info: SourceInfo = { mtimeMs: st.mtimeMs, size: st.size, ...analysis };
     sourceCache.set(absFile, info);
     return info;
   }

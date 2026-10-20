@@ -30,9 +30,13 @@ const MODULE_SCRIPT_RE = /<script\b[^>]*\bmodule\b[^>]*>([\s\S]*?)<\/script>/;
 const DATA_DECL_RE = /(?:export\s+)?(type|interface)\s+Data\b/;
 
 export function extractPageDataType(source: string): PageDataExtraction {
-  const none: PageDataExtraction = { declaration: null, importedRefs: [], imports: [] };
   const script = MODULE_SCRIPT_RE.exec(source)?.[1];
-  if (!script) return none;
+  return script ? extractDataFromModuleScript(script) : { declaration: null, importedRefs: [], imports: [] };
+}
+
+/** Same as `extractPageDataType`, given the module script's content (e.g. from the Svelte AST). */
+export function extractDataFromModuleScript(script: string): PageDataExtraction {
+  const none: PageDataExtraction = { declaration: null, importedRefs: [], imports: [] };
   const m = DATA_DECL_RE.exec(script);
   if (!m) return none;
   const isInterface = m[1] === "interface";
