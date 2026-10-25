@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **fix(preset): the client build bundles its dependencies.** `@hono/vite-build`
+  writes `external` to the top-level `build.rollupOptions`, and the client
+  environment of the one-run `vite build` inherited it:
+  `honoSvelte({ build: { external: Object.keys(pkg.dependencies) } })` shipped
+  page bundles with bare `import "pkg"` that the browser cannot resolve
+  ("Failed to resolve module specifier"). `external` now applies to the server
+  build only.
+
 ## 0.8.1
 
 - **fix(vite): `hono-svelte` stays bundled when another plugin externalizes
