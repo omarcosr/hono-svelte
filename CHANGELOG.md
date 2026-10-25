@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.2
 
 - **fix(preset): the client build bundles its dependencies.** `@hono/vite-build`
   writes `external` to the top-level `build.rollupOptions`, and the client
