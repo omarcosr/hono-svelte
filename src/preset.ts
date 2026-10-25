@@ -4,7 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ConfigEnv, PluginOption, UserConfig } from "vite";
+import type { ConfigEnv, Plugin, PluginOption, UserConfig } from "vite";
 import { pages, type PagesOptions, type PagesPlugin } from "./vite.js";
 
 export type HonoSvelteRuntime = "bun" | "node";
@@ -120,6 +120,20 @@ export function detectRuntime(): HonoSvelteRuntime {
 }
 
 /**
+ * `@hono/vite-build` writes its `external` list to the top-level
+ * `build.rollupOptions`, which every environment inherits — the client too.
+ * A browser cannot resolve a bare `import "pkg"`, so the client build bundles
+ * everything; `external` stays a server-only option.
+ */
+export function clientBundlesDeps(): Plugin {
+  return {
+    name: "hono-svelte-client-bundles-deps",
+    applyToEnvironment: (environment) => environment.name === "client",
+    options: (input) => (input.external === undefined ? null : { ...input, external: undefined }),
+  };
+}
+
+/**
  * `export default honoSvelte({ entry: "src/routes/index.ts" })` — replaces the
  * three-branch Vite config (client build / dev server / server build).
  * `pages({ dts: true })` is on by default.
@@ -172,6 +186,7 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
     const build = (await loadPeer(`@hono/vite-build/${runtime}`, "@hono/vite-build")).default;
     const serverPlugins: PluginOption[] = [
       ...plugins,
+      clientBundlesDeps(),
       build({ entry, outputDir: "./" + outDir, staticRoot: "./" + outDir, ...options.build }),
     ];
     // Plain `vite build`: one run builds the client environment (hashed

@@ -2,13 +2,14 @@
 // manifest on) must emit the manifest keys `manifestKeysFor` looks up and the
 // file names the shell links — the unit tests only ever see hand-written manifests.
 import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build } from "vite";
+import { build, type Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createManifestAssets, manifestCssFor, manifestKeyFor, type ViteManifest } from "../src/assets.js";
+import { clientBundlesDeps } from "../src/preset.js";
 import { pages } from "../src/vite.js";
 
 const fixture = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/build-app");
@@ -73,4 +74,38 @@ describe("vite build (client)", () => {
   it("the stylesEntry lands in the manifest under its source path", () => {
     expect(manifest["styles.css"]?.file).toMatch(/^static\/styles-[\w-]+\.css$/);
   });
+});
+
+// `@hono/vite-build` puts its `external` list on the top-level build, which the
+// client environment inherits: the browser then gets a bare `import "svelte/…"`.
+describe("vite build (client) with an inherited external list", () => {
+  async function clientChunks(extraPlugins: Plugin[]): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), "hono-svelte-client-ext-"));
+    try {
+      const appPages = pages({ pagesDir: join(fixture, "pages") });
+      (appPages.configResolved as (config: unknown) => void)({ root: fixture, plugins: [], mode: "client", command: "build" });
+      await build({
+        root: fixture,
+        configFile: false,
+        logLevel: "silent",
+        plugins: [svelte(), appPages, ...extraPlugins],
+        build: { outDir: dir, emptyOutDir: true, rollupOptions: { input: appPages.input(), external: ["svelte", /^svelte\//] } },
+      });
+      return readdirSync(dir, { recursive: true })
+        .filter((f) => String(f).endsWith(".js"))
+        .map((f) => readFileSync(join(dir, String(f)), "utf8"))
+        .join("\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const bareSvelte = /(?:from|import)\s*["']svelte(?:\/[^"']*)?["']/;
+
+  it("without the fix the bundle keeps bare imports", async () => {
+    expect(await clientChunks([])).toMatch(bareSvelte);
+  }, 60_000);
+
+  it("clientBundlesDeps() bundles them into the client", async () => {
+    expect(await clientChunks([clientBundlesDeps()])).not.toMatch(bareSvelte);
+  }, 60_000);
 });
