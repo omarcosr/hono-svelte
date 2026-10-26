@@ -65,6 +65,16 @@ export type PagesOptions = {
    * default — no repeating the path in the Vite config and the server.
    */
   stylesEntry?: string;
+  /**
+   * Interactive pages (with an instance `<script>`) to render on the server
+   * and hydrate on the client, instead of shipping an empty root that only
+   * fills once the bundle runs. `true` = every interactive page, or a list
+   * of entry names. Their script must run on the server too (no `window` /
+   * `document` at the top level — use `onMount` / `$effect`); `shell({
+   * ssrFallback: true })` turns an SSR failure into client rendering.
+   * @default false
+   */
+  hydrate?: boolean | string[];
 };
 
 export type PagesPlugin = Plugin & {
@@ -194,6 +204,8 @@ type PageSpec = {
   file: string;
   absFile: string;
   isStatic: boolean;
+  /** Interactive page rendered on the server and hydrated (`pages({ hydrate })`). */
+  hydrate: boolean;
   /** Layout entryNames, outermost first. Empty when `layouts: false` or none. */
   layouts: string[];
   /** Extracted `Data` declaration (per-page typed data for the dts), if any. */
@@ -240,6 +252,8 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   const ignore = options.ignore ?? DEFAULT_IGNORE;
   const layoutsEnabled = options.layouts ?? true;
   const alwaysClient = new Set(options.alwaysClient ?? []);
+  const hydrated = (entryName: string): boolean =>
+    options.hydrate === true || (Array.isArray(options.hydrate) && options.hydrate.includes(entryName));
   const header = options.generatedHeader ?? "// @generated - hono-svelte, do not edit.";
   const stylesEntry = options.stylesEntry ? normalizeSlashes(options.stylesEntry).replace(/^(\.?\/)+/, "") : undefined;
   const filter = createFilter(["**/*.svelte"], ignore, { resolve: pagesDir });
@@ -361,7 +375,8 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       // <script module> feeds a typed overload in the generated dts. Types it
       // imports are carried along as `import("…")` queries (see dataDeclaration).
       const dataType = info.extracted.declaration ?? undefined;
-      result.push({ entryName, file, absFile, isStatic, layouts, dataType, dataImports: info.extracted.imports });
+      const hydrate = !isStatic && hydrated(entryName);
+      result.push({ entryName, file, absFile, isStatic, hydrate, layouts, dataType, dataImports: info.extracted.imports });
     }
     return result;
   }
@@ -390,7 +405,7 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
 
   function stateKey(): string {
     const pagesKey = listPages()
-      .map((p) => (p.isStatic ? "S:" : "C:") + p.entryName + (p.dataType ? "@" + p.dataType + JSON.stringify(p.dataImports) : ""))
+      .map((p) => (p.isStatic ? "S:" : p.hydrate ? "H:" : "C:") + p.entryName + (p.dataType ? "@" + p.dataType + JSON.stringify(p.dataImports) : ""))
       .join("|");
     const layoutsKey = cachedLayouts
       .map((l) => "L:" + l.entryName + (l.dataType ? "@" + l.dataType + JSON.stringify(l.dataImports) : ""))
@@ -558,7 +573,8 @@ function layoutImportPath(layout: LayoutSpec): string {
 /**
    * Absolute path when `id` is a component the shell may render on the server:
    * static pages, layouts AND every component they import (a layout's nav, a
-   * component library). Client pages are excluded — the shell never SSRs them.
+   * component library). Client pages are excluded: a hydrated one is
+   * server-rendered, but its CSS ships with its client bundle (linked by the shell).
    */
   function ssrRenderedFile(id: string): string | null {
     if (!id.endsWith(".svelte") || !existsSync(id)) return null;
@@ -575,10 +591,12 @@ function layoutImportPath(layout: LayoutSpec): string {
     // Static pages get an ssrPages loader REGARDLESS of layouts; the shell
     // SSRs them and wraps the chain. Client entries (has <script>) also get
     // a virtual entry module for the client build, but NEVER an ssrPages
-    // loader — otherwise hasClientEntry() can't distinguish them.
+    // loader — otherwise hasClientEntry() can't distinguish them. The
+    // exception is a hydrated page: a client entry WITH a loader, which the
+    // shell server-renders and still ships with its script.
     const client = all.filter((p) => !p.isStatic).map((p) => p.entryName);
     const staticPages = all.filter((p) => p.isStatic);
-    const loaders = staticPages.map(
+    const loaders = all.filter((p) => p.isStatic || p.hydrate).map(
       (p) => "  " + JSON.stringify(p.entryName) + ": () => import(" + JSON.stringify(pageImportPath(p)) + "),",
     );
     const layoutLoaders = cachedLayouts.map(
@@ -617,16 +635,16 @@ function layoutImportPath(layout: LayoutSpec): string {
   function entrySource(page: PageSpec): string {
     const ids = getIds(page.entryName);
     // Client entries mount the layout chain around the page (see
-    // entryMountSource). Static import (no `await import`) so the
-    // bundler keeps one copy of the svelte runtime in the entry chunk.
+    // entryMountSource); hydrated pages hydrate it when the root holds the
+    // server render. Static import (no `await import`) so the bundler keeps
+    // one copy of the svelte runtime in the entry chunk.
+    const imports = [...(page.layouts.length > 0 ? ["createRawSnippet"] : []), ...(page.hydrate ? ["hydrate"] : []), "mount"];
     const layoutImports = page.layouts
       .map((l, i) => `import Layout${i} from ${JSON.stringify(layoutImportPath(layoutByName(l)))};`)
       .join("\n");
     return (
       header + " Source: " + page.file + "\n" +
-      (page.layouts.length > 0
-        ? 'import { createRawSnippet, mount } from "svelte";\n'
-        : 'import { mount } from "svelte";\n') +
+      "import { " + imports.join(", ") + ' } from "svelte";\n' +
       "import Page from " + JSON.stringify(pageImportPath(page)) + ";\n" +
       (page.layouts.length > 0 ? layoutImports + "\n" : "") +
       "const target = document.getElementById(" + JSON.stringify(ids.rootId) + ");\n" +
@@ -636,31 +654,35 @@ function layoutImportPath(layout: LayoutSpec): string {
       "const context = new Map([[Symbol.for(\"hono-svelte:page\"), {" +
       " path: target?.getAttribute(\"data-hs-path\") ?? location.pathname," +
       " route: target?.getAttribute(\"data-hs-route\") ?? location.pathname }]]);\n" +
+      // A server-rendered root (or layout slot) has content to hydrate; an
+      // empty one (client rendering, `ssrFallback`) is mounted.
+      (page.hydrate ? "const start = (C, o) => (o.target.firstChild ? hydrate : mount)(C, o);\n" : "") +
       entryMountSource(page) +
       "\n"
     );
   }
 
 function entryMountSource(page: PageSpec): string {
-    if (page.layouts.length === 0) return "if (target) mount(Page, { target, props, context });";
-    // Client entries are never server-rendered (the shell only SSRs static
-    // pages), so the chain is MOUNTED, outermost first: Layout0 > … > Page.
+    const mount = page.hydrate ? "start" : "mount";
+    if (page.layouts.length === 0) return `if (target) ${mount}(Page, { target, props, context });`;
+    // The chain is mounted (or hydrated), outermost first: Layout0 > … > Page.
     // NOTE: createRawSnippet's snippet MUST render one wrapper element
     // (client impl takes get_first_child(fragment) and calls setup(element));
     // an empty render yields a null element. The SSR side (src/index.ts)
-    // renders the same <div> wrappers.
+    // renders the same <div> wrappers: when hydrating, setup receives the
+    // server-rendered wrapper and hydrates the child inside it.
     const lines = [
       "if (target) {",
       "  const slot = (C, p) => createRawSnippet(() => ({",
       "    render: () => \"<div style=\\\"display:contents\\\"></div>\",",
-      "    setup: (el) => { mount(C, { target: el, props: p, context }); },",
+      `    setup: (el) => { ${mount}(C, { target: el, props: p, context }); },`,
       "  }));",
       "  let children = slot(Page, props);",
     ];
     for (let i = page.layouts.length - 1; i >= 1; i--) {
       lines.push(`  children = slot(Layout${i}, { ...props, children });`);
     }
-    lines.push("  mount(Layout0, { target, props: { ...props, children }, context });", "}");
+    lines.push(`  ${mount}(Layout0, { target, props: { ...props, children }, context });`, "}");
     return lines.join("\n");
   }
 

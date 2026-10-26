@@ -532,6 +532,7 @@ export function shell(options: ShellOptions = {}) {
     options.knownEntries ?? (autoAllEntries.length > 0 ? [...autoAllEntries] : undefined) ?? defaultKnownEntries(ssrPages);
   const knownSet = known ? new Set(known) : undefined;
   const isSsrEntry = (entry: string): boolean => ssrPages[entry] !== undefined && !clientEntries.has(entry);
+  const isHydratedEntry = (entry: string): boolean => ssrPages[entry] !== undefined && clientEntries.has(entry);
   const layoutLoaders = memoByEntry((entry) =>
     layoutChain(entry, Object.keys(ssrLayouts)).flatMap((name) => ssrLayouts[name] ?? []),
   );
@@ -647,7 +648,9 @@ export function shell(options: ShellOptions = {}) {
 
     let bodyHtml = "";
     let ssrHead = "";
-    if (isSsr) {
+    // `pages({ hydrate })`: an interactive page with a server loader is
+    // rendered here AND ships its script, which hydrates the markup.
+    if (isSsr || isHydratedEntry(entryName)) {
       try {
         const loader = ssrPages[entryName] as SsrPageLoader;
         ({ html: bodyHtml, head: ssrHead } = await renderSsrBody(loader, layoutLoaders(entryName), data, nonce, page));

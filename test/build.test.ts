@@ -9,6 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getIds } from "../src/ids.js";
 import { pages } from "../src/vite.js";
 
 const fixture = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/build-app");
@@ -22,7 +23,7 @@ beforeAll(async () => {
     root: fixture,
     configFile: false,
     logLevel: "silent",
-    plugins: [svelte(), pages({ pagesDir: join(fixture, "pages") })],
+    plugins: [svelte(), pages({ pagesDir: join(fixture, "pages"), hydrate: ["docs/counter"] })],
     ssr: { noExternal: true },
     build: {
       ssr: join(fixture, "server.ts"),
@@ -67,6 +68,17 @@ describe("vite build (ssr)", () => {
     expect(page).toContain("Static docs page");
     expect(page).toMatch(/<style[^>]*>[^<]*goldenrod/);
     expect(page).toMatch(/<style[^>]*>[^<]*seagreen/);
+  });
+
+  it("hydrated page: server-rendered inside its layout, with its script and props", async () => {
+    const page = await html("/counter");
+    const ids = getIds("docs/counter");
+    const root = page.slice(page.indexOf(`<div id="${ids.rootId}"`), page.indexOf(`<script type="application/json"`));
+    expect(root).toMatch(/<nav class="docs-nav[^"]*" data-route="\/counter">/);
+    expect(root).toMatch(/<div style="display:contents">.*<button[^>]*>Clicked 3<\/button>/s);
+    expect(root).toContain("<!--[-->");
+    expect(page).toContain('<script type="module"');
+    expect(page).toContain(`<script type="application/json" id="${ids.dataId}">{"start":3}</script>`);
   });
 
   it("layouts read the page info through getPage()", async () => {
