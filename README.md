@@ -366,6 +366,7 @@ Vite config factory (`hono-svelte/vite`): `export default honoSvelte({ … })`. 
 | — | — | Plain `vite build` builds the `client` environment then `ssr` (Vite environments); `--mode client` builds the client alone |
 | `plugins` | `[]` | Extra Vite plugins for every mode (Tailwind, …) |
 | `devServer` / `build` | — | Extra options forwarded to `@hono/vite-dev-server` / `@hono/vite-build` |
+| `staticFiles` | `{}` | Static files of the server bundle, served by [`staticFiles()`](#static-files-in-production) instead of `@hono/vite-build`'s plain `serveStatic`: `{ precompressed, sourcemaps, cacheControl }`. `false` restores the plain `serveStatic` (no cache headers, no precompression) |
 
 The returned function exposes `.pages` (the underlying plugin). The optional peers are resolved from the app at config time, so an app that writes its own config never needs them.
 
@@ -387,7 +388,7 @@ Hono middleware that provides `c.render(entry, data?)` and `c.setHead(head)` on 
 | `head` | `""` | Extra HTML in `<head>` (fonts, meta tags) |
 | `nonce` | — | CSP nonce string or `(c) => string` (applied to shell `<script>`/`<link>`) |
 | `preload` | `true` in prod | `<link rel="modulepreload">` for the entry (+ manifest imports) |
-| `prefetch` | `false` | `"all"` emits `modulepreload` for other entries; `"hover"` injects a script that preloads them on link hover |
+| `prefetch` | `false` | `"all"` emits `modulepreload` for other entries; `"hover"` injects an inline script that preloads them on link hover — under a CSP without `'unsafe-inline'`, pass `nonce` or the browser blocks it |
 | `dataLimit` | `102400` | Warn once above this many `data` bytes (`false` disables) |
 | `headers` | `{}` | Default response headers; one the route set with `c.header()` wins |
 | `strict` | `true` | Unknown entries throw a dev-friendly error; `false` disables |
@@ -556,11 +557,35 @@ generic helpers with `UntypedEntry`, and render typed pages directly.
 
 - Hashed files: build the client (`manifest: true`) before the server — the order `honoSvelte()` and the scaffold scripts use — and `pages()` embeds its manifest into the server bundle (`pages({ clientManifest })`, default `dist/.vite/manifest.json`) — `shell()` picks it up, no reading the file at startup. Passing `shell({ assets: manifest })` still works and wins. Either way the manifest covers the global stylesheet: declare it once with `pages({ stylesEntry: "src/app.css" })` — `appPages.input()` then includes it and the shell defaults to it — or keep `styles: resolve("src/styles.css")` in the client input (with `shell({ stylesEntry })` for another file); its hashed name comes from the manifest, no hand-written `stylesHref`. The shell walks the entry's static import graph: the CSS of shared chunks (layouts, components used by several pages) is linked together with the entry's own CSS, and every reachable chunk gets a `modulepreload`.
 - `pages()` keeps `hono-svelte` itself bundled in the server build (`ssr.noExternal`, and taken out of any `build.rollupOptions.external` / `@hono/vite-build` `external` list): the shell reaches the pages through the plugin's virtual manifest, so an externalized copy would silently render with no static pages or layouts. Externalizing every other dependency (e.g. native modules) is fine. With `honoSvelte()`, `build.external` only affects the server build: the client bundles everything it imports.
-- Serve hashed files with long cache and `immutable` (`immutableHeaders()` / `CACHE_IMMUTABLE`); the HTML shell itself suits `CACHE_NO_STORE`.
+- Static files: with `honoSvelte()` the server bundle already serves them with cache headers and precompressed variants (see below). With a hand-written config, wrap your runtime's `serveStatic` in `staticFiles()`, or set `immutableHeaders()` / `CACHE_IMMUTABLE` on hashed files yourself; the HTML shell itself suits `CACHE_NO_STORE`.
 - CSP: pass `shell({ nonce })` (string or from `secureHeaders()` context) — shell tags carry the nonce. Without a nonce, static pages keep working with `script-src 'self'` (no executable inline script, except the opt-in `prefetch: "hover"` helper).
 - Theme attributes on the root element: `shell({ htmlAttributes: { "data-theme": "dark" } })` (DaisyUI), or a function reading a cookie for per-user themes.
 - The shell emits a neutral `<body>` (no framework classes) — style `body`/`html` from your global stylesheet (`stylesHref`), e.g. `body { @apply bg-base-200 min-h-screen text-base-content; }` with Tailwind/DaisyUI.
 - Run both client and server builds before serving; the example in `examples/playground/` shows the full setup.
+
+### Static files in production
+
+`@hono/vite-build` serves `outDir` (client build + `publicDir`) from the generated entry, before your app — app middlewares never see those requests. `honoSvelte()` replaces that `serveStatic` with `staticFiles()` from `hono-svelte/static`:
+
+- `/static/*` (content-hashed by the client build): `Cache-Control: public, max-age=31536000, immutable`.
+- Other files (`publicDir`: favicon, fonts, …): `Cache-Control: public, max-age=3600` (`cacheControl`) plus a weak `ETag`; a matching `If-None-Match` gets a `304`.
+- Compression at build time: `.br` and `.gz` are written next to every text file (JS, CSS, SVG, JSON, …) of 1 KB or more, and served when `Accept-Encoding` allows (`precompressed`, on by default) — no CPU per request, no compression middleware.
+- `*.map` and `.vite/` (the manifest) are not served: a client build with `sourcemap: true` keeps its maps on disk (error trackers) without publishing the front-end sources. `sourcemaps: true` serves them.
+
+```ts
+honoSvelte({ staticFiles: { cacheControl: "no-cache", sourcemaps: false } });
+```
+
+With a hand-written config, use it in your own entry (Bun or Node: it reads the disk):
+
+```ts
+import { serveStatic } from "hono/bun";
+import { staticFiles } from "hono-svelte/static";
+
+app.use("/static/*", staticFiles(serveStatic, { root: "./dist" }));
+```
+
+A CDN in front (Cloudflare) keeps working: it honors `Cache-Control` and passes `Content-Encoding: br` through.
 
 ## Example
 

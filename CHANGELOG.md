@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **feat(preset): production static files get cache headers, compression and
+  no source maps.** `honoSvelte()` replaces `@hono/vite-build`'s plain
+  `serveStatic` (which sent no `Cache-Control`/`ETag`, so browsers fetched
+  every asset on every page) with the new `staticFiles()` from
+  `hono-svelte/static`: hashed `/static/*` files are `immutable` for a year,
+  other files (`publicDir`) get `public, max-age=3600` plus a weak `ETag`
+  (304s). A new `precompress()` build step writes `.br`/`.gz` next to text
+  assets, served when the client accepts them. `*.map` files and `.vite/` are
+  no longer served — **behavior change** for apps that relied on public client
+  source maps (`staticFiles: { sourcemaps: true }` restores them). Opt out
+  entirely with `honoSvelte({ staticFiles: false })`.
+- **docs: `prefetch: "hover"` needs a CSP nonce** — it is an inline script.
+
 ## 0.8.2
 
 - **fix(preset): the client build bundles its dependencies.** `@hono/vite-build`
