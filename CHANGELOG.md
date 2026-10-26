@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
+
+- **feat(vite): `pages({ hydrate })` server-renders interactive pages.**
+  Interactive pages (with an instance `<script>`) arrived as an empty root
+  plus JSON props and stayed blank until their bundle ran. With
+  `pages({ hydrate: true | string[] })` (also forwarded by `honoSvelte()`) the
+  shell renders them inside their layout chain and still ships their script;
+  the generated entry hydrates the server render, or mounts an empty root
+  (`ssrFallback`). Same markup, props block and nonce handling, no new inline
+  scripts. Opt-in: page scripts also run on the server, so `window`/`document`
+  must stay in `onMount`/`$effect`.
 
 - **feat(preset): production static files get cache headers, compression and
   no source maps.** `honoSvelte()` replaces `@hono/vite-build`'s plain
