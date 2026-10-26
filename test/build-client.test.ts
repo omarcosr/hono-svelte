@@ -4,12 +4,13 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, type Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createManifestAssets, manifestCssFor, manifestKeyFor, type ViteManifest } from "../src/assets.js";
-import { clientBundlesDeps } from "../src/preset.js";
+import { clientBundlesDeps, precompress } from "../src/preset.js";
 import { pages } from "../src/vite.js";
 
 const fixture = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/build-app");
@@ -26,7 +27,7 @@ beforeAll(async () => {
     configFile: false,
     logLevel: "silent",
     mode: "client",
-    plugins: [svelte(), appPages],
+    plugins: [svelte(), appPages, precompress()],
     build: {
       outDir,
       emptyOutDir: true,
@@ -69,6 +70,14 @@ describe("vite build (client)", () => {
         expect(existsSync(join(outDir, css.slice(1)))).toBe(true);
       }
     }
+  });
+
+  it("precompress() writes .br and .gz next to the client files", () => {
+    const js = join(outDir, createManifestAssets(manifest)("docs/counter").slice(1));
+    const source = readFileSync(js);
+    expect(brotliDecompressSync(readFileSync(js + ".br")).equals(source)).toBe(true);
+    expect(gunzipSync(readFileSync(js + ".gz")).equals(source)).toBe(true);
+    expect(readFileSync(js + ".br").length).toBeLessThan(source.length);
   });
 
   it("the stylesEntry lands in the manifest under its source path", () => {

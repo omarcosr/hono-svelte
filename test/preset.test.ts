@@ -31,6 +31,7 @@ describe("honoSvelte() preset", () => {
       expect(build.rollupOptions.input.styles).toBe(resolve(root, "src/styles.css"));
       const names = (cfg.plugins as { name?: string }[]).flat().map((p) => p?.name ?? "");
       expect(names).toContain("hono-svelte-pages");
+      expect(names).toContain("hono-svelte-precompress");
       expect(names.some((n) => n.includes("vite-plugin-svelte"))).toBe(true);
       expect(config.pages.entries()).toEqual(["app", "index"]);
       expect(config.pages.dtsPath()).toBe(resolve(root, "src/hono-svelte-entries.d.ts"));
@@ -45,6 +46,10 @@ describe("honoSvelte() preset", () => {
       expect(Object.keys(build.rollupOptions.input)).toEqual(["app"]);
       expect(build.outDir).toBe("build");
       expect(config.pages.dtsPath()).toBeNull();
+      for (const staticFiles of [false, { precompressed: false }] as const) {
+        const off = await honoSvelte({ styles: false, dts: false, staticFiles })({ command: "build", mode: "client", isSsrBuild: false, isPreview: false });
+        expect((off.plugins as { name?: string }[]).flat().map((p) => p?.name)).not.toContain("hono-svelte-precompress");
+      }
     });
   });
 
