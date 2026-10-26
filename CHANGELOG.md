@@ -14,6 +14,13 @@
   source maps (`staticFiles: { sourcemaps: true }` restores them). Opt out
   entirely with `honoSvelte({ staticFiles: false })`.
 - **docs: `prefetch: "hover"` needs a CSP nonce** — it is an inline script.
+- **feat(vite): `pages({ hydrate })` server-renders interactive pages.**
+  Opt-in (`true` or a list of entries, forwarded by `honoSvelte()`): the
+  manifest gets a server loader for those pages, the shell renders them inside
+  their layout chain and still ships their script, and the generated entry
+  hydrates a server-rendered root (Svelte 5 `hydrate`) or mounts an empty one
+  (`ssrFallback`). No blank screen while the bundle loads; same markup, props
+  block and CSP behavior as before.
 
 ## 0.8.2
 

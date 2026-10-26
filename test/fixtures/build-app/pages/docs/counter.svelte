@@ -1,5 +1,6 @@
 <script lang="ts">
-  let count = $state(0);
+  let { start = 0 }: { start?: number } = $props();
+  let count = $state(start);
 </script>
 
 <button onclick={() => (count += 1)}>Clicked {count}</button>

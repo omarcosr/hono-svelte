@@ -284,6 +284,19 @@ describe("pages() plugin", () => {
       ) as string;
       expect(code).toContain("Layout0");
       expect(code).toContain("mount(Layout0");
+      expect(code).not.toContain("hydrate");
+
+      // pages({ hydrate }): a server loader for the page, and an entry that
+      // hydrates a server-rendered root (mounts an empty one).
+      const hydrated = pages({ pagesDir: dir, hydrate: ["nested/page"] });
+      hydrated.configResolved({ root: dir } as never);
+      hydrated.buildStart();
+      expect(hydrated.load(MANIFEST_RESOLVED) as string).toMatch(/"nested\/page": \(\) => import\(/);
+      const entry = hydrated.load(String.fromCharCode(0) + ENTRY_PREFIX + "nested/page") as string;
+      expect(entry).toContain('import { createRawSnippet, hydrate, mount } from "svelte";');
+      expect(entry).toContain("const start = (C, o) => (o.target.firstChild ? hydrate : mount)(C, o);");
+      expect(entry).toContain("setup: (el) => { start(C, { target: el, props: p, context }); }");
+      expect(entry).toContain("start(Layout0, { target, props: { ...props, children }, context });");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

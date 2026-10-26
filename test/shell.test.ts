@@ -444,6 +444,37 @@ describe("shell", () => {
     }
   });
 
+  it("hydrated entry (client entry with a loader): server markup + script + all data", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const boom = async () => {
+        throw new Error("ssr boom");
+      };
+      const app = new Hono();
+      app.use(
+        "/*",
+        shell({
+          ssrPages: Object.assign({ greet: propsLoader, broken: boom }, { __clientEntries: ["greet", "broken"] }) as never,
+          ssrFallback: true,
+          isProd: true,
+        }),
+      );
+      app.get("/", (c) => c.render("greet", { name: "Ada" }));
+      app.get("/broken", (c) => c.render("broken", { name: "Ada" }));
+      const html = await (await app.request("/")).text();
+      const ids = getIds("greet");
+      expect(html).toMatch(new RegExp(`<div id="${ids.rootId}"[^>]*><!--\\[-->.*Greeting page`, "s"));
+      expect(html).toContain('<script type="module" src="/static/greet.js"');
+      expect(html).toContain(`<script type="application/json" id="${ids.dataId}">{"name":"Ada"}</script>`);
+      // SSR failure: an empty root the entry mounts into.
+      const fallback = await (await app.request("/broken")).text();
+      expect(fallback).toContain(`<div id="${getIds("broken").rootId}" data-hs-path="/broken" data-hs-route="/broken"></div>`);
+      expect(fallback).toContain('<script type="module" src="/static/broken.js"');
+    } finally {
+      err.mockRestore();
+    }
+  });
+
   it("nested layouts wrap SSR html inside out", async () => {
     const layout = async () => ({
       default: (await import("./fixtures/_pages/nested-layout.svelte")).default,

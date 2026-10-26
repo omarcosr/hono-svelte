@@ -7,5 +7,6 @@ const app = new Hono();
 app.use("/*", shell({ title: "Build app" }));
 app.get("/landing", (c) => c.render("landing"));
 app.get("/docs", (c) => c.render("docs/intro"));
+app.get("/counter", (c) => c.render("docs/counter", { start: 3 }));
 
 export default app;

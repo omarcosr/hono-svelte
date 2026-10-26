@@ -114,6 +114,19 @@ Declare `export type Data` in the page's `<script module>` to type it per page �
 Large payloads trigger a `console.warn` — once per page (default limit 100KB, `shell({ dataLimit })`).
 Anything sensitive, large, or frequently changing stays in the API, fetched after mount with the typed Hono client (`hc<AppType>`) — with the session in an `HttpOnly` cookie as usual. Never put secrets in `data`: it is visible in the HTML.
 
+## Server rendering interactive pages
+
+By default an interactive page (one with an instance `<script>`) arrives as an empty root plus its JSON data, and the screen stays blank until its bundle runs. `pages({ hydrate })` (also accepted by `honoSvelte()`) renders it on the server inside its layouts, and the client entry **hydrates** that markup (Svelte 5 `hydrate`) instead of mounting from scratch:
+
+```ts
+honoSvelte({ hydrate: true });                        // every interactive page
+honoSvelte({ hydrate: ["dashboard/index", "auth"] }); // or some of them
+```
+
+- The page's script now also runs on the server: keep `window`, `document` and `localStorage` inside `onMount` / `$effect`. With `shell({ ssrFallback: true })` a page whose server render throws is sent with an empty root and the entry mounts it on the client, as before.
+- Nothing changes in the markup contract: same root, same `<script type="application/json">` props block, the same `<div style="display:contents">` layout wrappers, `nonce` on every shell tag, and no new inline scripts.
+- The page's own CSS comes from its client bundle (linked in `<head>` in production). In `vite` dev it arrives with the module, so a hydrated page can flash unstyled in dev only.
+
 ## Status, headers and per-page head
 
 `c.render(entry, data)` only carries the page data. Status and headers are Hono's own `c.status()` / `c.header()`; the document `<head>` is `c.setHead()`, set before rendering:
@@ -431,6 +444,7 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 | `alwaysClient` | `[]` | Pages that always get JS, even without `<script>` |
 | `clientManifest` | `"dist/.vite/manifest.json"` | Client build manifest embedded into the server build (`vite build` only; missing file = nothing embedded). `shell()` then resolves hashed assets without `assets`. `false` disables |
 | `stylesEntry` | — | Global stylesheet (e.g. `"src/app.css"`): `input()` adds it as `styles` and `shell()` uses it as its `stylesEntry` default — one place for the path |
+| `hydrate` | `false` | Server-render interactive pages and hydrate them: `true` for all, or a list of entries — see [Server rendering interactive pages](#server-rendering-interactive-pages) |
 
 Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `dataTypes()` (extracted `Data` declarations), `types()` (entry union), `typeDeclarations()` (hono module snippet), `dtsPath()` / `writeDts()` (generated `.d.ts`), `validateConfig()` (fail fast on bad Vite setup).
 

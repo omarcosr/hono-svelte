@@ -57,7 +57,7 @@ export type HonoSvelteConfig = ((env: ConfigEnv) => Promise<UserConfig>) & {
   pages: PagesPlugin;
 };
 
-const PAGES_KEYS: (keyof PagesOptions)[] = ["pagesDir", "ignore", "alwaysClient", "generatedHeader", "layouts", "dts", "clientManifest"];
+const PAGES_KEYS: (keyof PagesOptions)[] = ["pagesDir", "ignore", "alwaysClient", "generatedHeader", "layouts", "dts", "clientManifest", "hydrate"];
 
 function isModuleNotFound(err: unknown): boolean {
   const code = (err as { code?: string }).code;
