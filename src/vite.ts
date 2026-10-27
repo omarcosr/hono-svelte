@@ -218,6 +218,50 @@ const SELF = "hono-svelte";
 
 const isSelf = (id: string): boolean => id === SELF || id.startsWith(SELF + "/");
 
+/** Package name of a bare import (`@scope/pkg/sub` → `@scope/pkg`); undefined for paths, virtual and `node:` ids. */
+const packageName = (id: string): string | undefined =>
+  /^[./\\\0]|^[\w-]+:/.test(id) ? undefined : id.split("/").slice(0, id.startsWith("@") ? 2 : 1).join("/");
+
+const hasSvelteCondition = (exports: unknown): boolean =>
+  typeof exports === "object" &&
+  exports !== null &&
+  Object.entries(exports).some(([key, value]) => key === "svelte" || hasSvelteCondition(value));
+
+const svelteLibs = new Map<string, boolean>();
+
+/**
+ * Ships `.svelte` sources (a `svelte` field or export condition), like hono-svelte itself:
+ * the server build has to compile it, an external copy fails to load at runtime.
+ */
+function isSvelteLib(name: string, root: string): boolean {
+  const key = `${root}\0${name}`;
+  let found = svelteLibs.get(key);
+  if (found !== undefined) return found;
+  found = false;
+  for (let dir = root; ; dir = dirname(dir)) {
+    const file = resolve(dir, "node_modules", name, "package.json");
+    if (existsSync(file)) {
+      try {
+        const pkg = JSON.parse(readFileSync(file, "utf8")) as { svelte?: unknown; exports?: unknown };
+        found = Boolean(pkg.svelte) || hasSvelteCondition(pkg.exports);
+      } catch {
+        // Unreadable package.json: leave the app's `external` choice alone.
+      }
+      break;
+    }
+    if (dirname(dir) === dir) break;
+  }
+  svelteLibs.set(key, found);
+  return found;
+}
+
+/** hono-svelte and Svelte libraries never stay external in the server build. */
+const mustBundle = (id: string, root: string): boolean => {
+  if (isSelf(id)) return true;
+  const name = packageName(id);
+  return name !== undefined && isSvelteLib(name, root);
+};
+
 type ExternalFn = (id: string, parent: string | undefined, isResolved: boolean) => boolean | null | undefined | void;
 type ExternalOption = string | RegExp | (string | RegExp)[] | ExternalFn;
 
@@ -226,25 +270,34 @@ type SsrExternalConfig = {
   environments?: Record<string, { resolve?: { external?: unknown } } | undefined>;
 };
 
-/** Takes hono-svelte out of `ssr.external` / `environments.*.resolve.external` lists, in place. */
-export function dropSelfFromSsrExternal(config: SsrExternalConfig): void {
+/**
+ * Takes hono-svelte and Svelte libraries out of `ssr.external` /
+ * `environments.*.resolve.external` lists, in place. Returns the libraries it removed.
+ */
+export function dropSelfFromSsrExternal(config: SsrExternalConfig, root = process.cwd()): string[] {
+  const removed = new Set<string>();
   const clean = (holder: { external?: unknown } | undefined): void => {
     if (holder && Array.isArray(holder.external)) {
-      holder.external = holder.external.filter((id) => typeof id !== "string" || !isSelf(id));
+      holder.external = holder.external.filter((id) => {
+        if (typeof id !== "string" || !mustBundle(id, root)) return true;
+        if (!isSelf(id)) removed.add(id);
+        return false;
+      });
     }
   };
   clean(config.ssr);
   for (const env of Object.values(config.environments ?? {})) clean(env?.resolve);
+  return [...removed];
 }
 
-/** `external` with hono-svelte (and its subpaths) taken out; everything else unchanged. */
-function bundleSelf(external: ExternalOption): ExternalOption {
+/** `external` with hono-svelte (and its subpaths) and Svelte libraries taken out; everything else unchanged. */
+function bundleSelf(external: ExternalOption, root: string): ExternalOption {
   if (typeof external === "function") {
-    return (id, parent, isResolved) => (isSelf(id) ? false : external(id, parent, isResolved));
+    return (id, parent, isResolved) => (mustBundle(id, root) ? false : external(id, parent, isResolved));
   }
   const list = Array.isArray(external) ? external : [external];
-  if (list.every((e) => typeof e === "string")) return list.filter((e) => !isSelf(e as string));
-  return (id) => !isSelf(id) && list.some((e) => (typeof e === "string" ? e === id : e.test(id)));
+  if (list.every((e) => typeof e === "string")) return list.filter((e) => !mustBundle(e as string, root));
+  return (id) => !mustBundle(id, root) && list.some((e) => (typeof e === "string" ? e === id : e.test(id)));
 }
 
 export function pages(options: PagesOptions = {}): PagesPlugin {
@@ -701,17 +754,21 @@ function entryMountSource(page: PageSpec): string {
     // `order: "post"` sees what other plugins merged in: `@hono/vite-build`
     // copies its `external` list into `ssr.external`, and an explicit
     // `ssr.external` entry beats `noExternal` — so it is removed in place
-    // (a returned config would only be concatenated).
+    // (a returned config would only be concatenated). Svelte libraries get
+    // the same treatment: pages render on the server, and a library that
+    // ships `.svelte` sources only loads once compiled into the bundle.
     config: {
       order: "post",
       handler(config) {
-        dropSelfFromSsrExternal(config as SsrExternalConfig);
-        return { ssr: { noExternal: [SELF] } };
+        const root = resolve(config.root ?? process.cwd());
+        const libs = dropSelfFromSsrExternal(config as SsrExternalConfig, root);
+        return { ssr: { noExternal: [SELF, ...libs] } };
       },
     },
     options(input) {
       if (input.external === undefined) return null;
-      return { ...input, external: bundleSelf(input.external as unknown as ExternalOption) as typeof input.external };
+      const external = bundleSelf(input.external as unknown as ExternalOption, viteRoot ?? process.cwd());
+      return { ...input, external: external as typeof input.external };
     },
     configResolved(config) {
       viteRoot = config.root;

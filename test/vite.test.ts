@@ -190,6 +190,49 @@ describe("pages() plugin", () => {
     it("leaves builds without external alone", () => {
       expect((makePlugin().options as unknown as Hook)({})).toBeNull();
     });
+
+    describe("Svelte libraries", () => {
+      const withLibs = (run: (root: string) => void) => {
+        const root = mkdtempSync(join(tmpdir(), "hs-svelte-libs-"));
+        const lib = (name: string, pkg: object) => {
+          mkdirSync(join(root, "node_modules", name), { recursive: true });
+          writeFileSync(join(root, "node_modules", name, "package.json"), JSON.stringify({ name, ...pkg }));
+        };
+        lib("field-lib", { svelte: "./dist/index.js" });
+        lib("@scope/cond-lib", { exports: { ".": { types: "./dist/index.d.ts", svelte: "./dist/index.js" } } });
+        lib("plain-lib", { exports: { ".": { default: "./index.js" } } });
+        try {
+          run(root);
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      };
+
+      it("are taken out of ssr.external and marked noExternal", () =>
+        withLibs((root) => {
+          const config = {
+            root,
+            ssr: { external: ["argon2", "field-lib", "@scope/cond-lib", "plain-lib"] },
+            environments: { ssr: { resolve: { external: ["@scope/cond-lib", "mysql2"] } } },
+          };
+          const result = (makePlugin().config as unknown as ConfigHook).handler(config);
+          expect(config.ssr.external).toEqual(["argon2", "plain-lib"]);
+          expect(config.environments.ssr.resolve.external).toEqual(["mysql2"]);
+          expect(result).toEqual({ ssr: { noExternal: ["hono-svelte", "field-lib", "@scope/cond-lib"] } });
+        }));
+
+      it("are dropped from string, function and RegExp externals", () =>
+        withLibs((root) => {
+          const plugin = pages({ pagesDir: "test/fixtures/pages" });
+          plugin.configResolved({ root } as never);
+          const external = (value: unknown) => ((plugin.options as unknown as Hook)({ external: value }) ?? {}).external;
+          expect(external(["field-lib", "@scope/cond-lib", "plain-lib", "argon2"])).toEqual(["plain-lib", "argon2"]);
+          const fn = external(() => true) as (id: string, p?: string, r?: boolean) => unknown;
+          expect([fn("@scope/cond-lib/sub"), fn("field-lib"), fn("plain-lib"), fn("node:fs")]).toEqual([false, false, true, true]);
+          const re = external([/lib$/]) as (id: string) => boolean;
+          expect([re("field-lib"), re("@scope/cond-lib"), re("plain-lib")]).toEqual([false, false, true]);
+        }));
+    });
   });
 
   describe("stylesEntry", () => {
