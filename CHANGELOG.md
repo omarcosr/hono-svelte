@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.1
+
+- **fix(vite): Svelte libraries stay bundled in the server build.** With
+  `pages({ hydrate })` component libraries reach the server too, and
+  `honoSvelte({ build: { external: Object.keys(pkg.dependencies) } })` left
+  bare imports such as `@canutin/svelte-currency-input` in the server bundle;
+  Bun then failed with "Cannot find module" because the package only exports
+  the `svelte` condition. Any dependency with a `svelte` field or `svelte`
+  export condition is now treated like `hono-svelte`: removed from
+  `ssr.external`, `environments.*.resolve.external` and rollup `external`,
+  and added to `ssr.noExternal`.
+
 ## 0.9.0
 
 - **feat(vite): `pages({ hydrate })` server-renders interactive pages.**
