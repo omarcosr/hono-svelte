@@ -12,7 +12,7 @@
     "hono": "^4.13.8",
     "hono-svelte": "file:../..",
     "svelte": "^5.57.0",
-    "typebox": "1.4.2"
+    "typebox": "1.4.3"
   },
   "devDependencies": {
     "@hono/vite-build": "^1.11.1",
