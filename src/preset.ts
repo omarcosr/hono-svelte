@@ -57,7 +57,7 @@ export type HonoSvelteConfig = ((env: ConfigEnv) => Promise<UserConfig>) & {
   pages: PagesPlugin;
 };
 
-const PAGES_KEYS: (keyof PagesOptions)[] = ["pagesDir", "ignore", "alwaysClient", "generatedHeader", "layouts", "dts", "clientManifest", "hydrate"];
+const PAGES_KEYS: (keyof PagesOptions)[] = ["pagesDir", "ignore", "alwaysClient", "generatedHeader", "layouts", "dts", "clientManifest", "hydrate", "serverOnly"];
 
 function isModuleNotFound(err: unknown): boolean {
   const code = (err as { code?: string }).code;
@@ -212,7 +212,7 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
   const pagesOptions: PagesOptions = {
     dts: true,
     clientManifest: `${outDir}/.vite/manifest.json`,
-    ...(styles ? { stylesEntry: styles } : {}),
+    stylesEntry: styles,
   };
   for (const key of PAGES_KEYS) {
     if (options[key] !== undefined) (pagesOptions as Record<string, unknown>)[key] = options[key];

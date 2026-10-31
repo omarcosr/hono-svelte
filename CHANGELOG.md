@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+- **feat(vite): server-only modules, as in SvelteKit.** Pages, layouts and
+  everything they import are bundled into public files under `static/`.
+  When that code reaches a module named `*.server.*` or inside a `server/`
+  folder (outside `node_modules`), the client build now fails before writing
+  anything, and the dev client refuses to serve it; the error names the
+  module and its importer. `pages({ serverOnly: [...] })` (also on
+  `honoSvelte()`) adds the app's own globs; `false` turns it off. An app
+  that already imports such a file into client code will fail to build:
+  move the data to `layoutData` / the route's `data`, or opt out.
+- **fix: `styles: false` links no global stylesheet.** With
+  `honoSvelte({ styles: false })` (or `pages({ stylesEntry: false })`) the
+  shell still linked `/src/styles.css` in dev and `/static/styles.css` in
+  production, a 404 on every page. `false` now reaches the shell through the
+  virtual manifest and no global sheet is linked; `shell({ stylesEntry:
+  false })` does the same by hand. Leaving the option out keeps the
+  `src/styles.css` default.
+- **fix(vite): static pages get the CSS their layouts and components
+  import.** A static page under a layout that does `import "../../app.css"`
+  only received its inlined component styles: the server build drops CSS
+  imports and the page had no client chunk. Like SvelteKit's per-route
+  client nodes, every static page now gets a CSS-only entry in the client
+  build (its layouts and the page, followed through every import); the shell
+  links its hashed CSS and drops the inlined copies, and dev inlines the same
+  CSS. The entry's JS chunk is never linked: static pages still ship no JS.
+  Layouts of static pages are now compiled for the client too, so keep
+  server-only code out of them. Because more entries share code, interactive
+  pages may load the Svelte runtime and shared layouts as separate
+  (preloaded) chunks instead of one file.
+- **fix: dev no longer repeats component styles on server-rendered pages.**
+  Once the shell inlines the collected CSS, the copies Svelte injected into
+  the server render are dropped, as in production.
+
 ## 0.9.2
 
 - **fix(vite): hydrated pages are styled before their script runs.** In dev,

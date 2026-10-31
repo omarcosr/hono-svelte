@@ -378,6 +378,12 @@ describe("shell", () => {
       expect(await linkOf({ isProd: false })).toBe("/src/styles.css");
       expect(await linkOf({ assets: manifest, isProd: true, stylesHref: "/custom.css" })).toBe("/custom.css");
     });
+
+    it("stylesEntry: false links none, in prod and in dev, unless stylesHref is set", async () => {
+      expect(await linkOf({ assets: manifest, isProd: true, stylesEntry: false })).toBeUndefined();
+      expect(await linkOf({ isProd: false, stylesEntry: false })).toBeUndefined();
+      expect(await linkOf({ isProd: true, stylesEntry: false, stylesHref: "/custom.css" })).toBe("/custom.css");
+    });
   });
 
   it("prefetch all emits modulepreload links for other entries", async () => {
@@ -697,6 +703,54 @@ describe("CSS of hydrated pages", () => {
       await (await hydratedApp(true).request("/")).text();
       expect(collect).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("CSS of static pages", () => {
+  const layout = async () => ({ default: (await import("./fixtures/_pages/nested-layout.svelte")).default });
+  // What the client build emits for a static page's CSS-only entry: the layout lives in a shared chunk.
+  const manifest = {
+    "\0virtual:hono-svelte/entry/home/blog/post": { file: "static/home/blog/post-1.js", isEntry: true, imports: ["_layout"], css: ["static/post-2.css"] },
+    _layout: { file: "static/chunks/layout-3.js", css: ["static/layout-4.css"] },
+  };
+  const staticApp = (isProd: boolean) => {
+    const app = new Hono();
+    app.use(
+      "/*",
+      shell({
+        assets: manifest,
+        isProd,
+        stylesEntry: false,
+        ssrPages: Object.assign(
+          { "home/blog/post": staticLoader },
+          { __layouts: { "home/layout": layout, "home/blog/layout": layout }, __clientEntries: [] },
+        ) as never,
+      }),
+    );
+    app.get("/", (c) => c.render("home/blog/post"));
+    return app;
+  };
+
+  it("prod: links its entry's CSS, layouts first, and ships no JS", async () => {
+    const html = await (await staticApp(true).request("/")).text();
+    const links = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
+    expect(links).toEqual(["/static/layout-4.css", "/static/post-2.css"]);
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("modulepreload");
+  });
+
+  it("dev: inlines what the plugin collected for it and its layouts", async () => {
+    const collect = vi.fn(async () => [{ id: "/src/app.css", css: "body{color:red}" }]);
+    const key = Symbol.for("hono-svelte.dev-css");
+    (globalThis as Record<symbol, unknown>)[key] = collect;
+    try {
+      const html = await (await staticApp(false).request("/")).text();
+      expect(collect).toHaveBeenCalledWith("home/blog/post");
+      expect(html.split("</head>")[0]).toContain('<style data-vite-dev-id="/src/app.css">body{color:red}</style>');
+      expect(html).not.toContain("<script");
+    } finally {
+      delete (globalThis as Record<symbol, unknown>)[key];
+    }
   });
 });
 

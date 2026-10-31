@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, type Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createManifestAssets, manifestCssFor, manifestKeyFor, type ViteManifest } from "../src/assets.js";
@@ -82,6 +82,48 @@ describe("vite build (client)", () => {
 
   it("the stylesEntry lands in the manifest under its source path", () => {
     expect(manifest["styles.css"]?.file).toMatch(/^static\/styles-[\w-]+\.css$/);
+  });
+
+});
+
+// The server build embeds the client manifest above, as `honoSvelte()` does.
+describe("vite build (client + server): a static page", () => {
+  let page: string;
+
+  beforeAll(async () => {
+    const serverDir = mkdtempSync(join(tmpdir(), "hono-svelte-server-"));
+    // vitest sets NODE_ENV=test, which would compile `import.meta.env.PROD` to false.
+    const nodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      await build({
+        root: fixture,
+        configFile: false,
+        logLevel: "silent",
+        plugins: [svelte(), pages({ pagesDir: join(fixture, "pages"), stylesEntry: "styles.css", clientManifest: join(outDir, ".vite", "manifest.json") })],
+        ssr: { noExternal: true },
+        build: { ssr: join(fixture, "server.ts"), outDir: serverDir, emptyOutDir: true, rollupOptions: { output: { entryFileNames: "server.mjs" } } },
+      });
+      const app = (await import(pathToFileURL(join(serverDir, "server.mjs")).href)).default as { request: (p: string) => Promise<Response> };
+      page = await (await app.request("/docs")).text();
+    } finally {
+      process.env.NODE_ENV = nodeEnv;
+      rmSync(serverDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("links the CSS of its layout, of what the layout imports and its own, and ships no JS", () => {
+    const css = [...page.matchAll(/<link rel="stylesheet" href="\/([^"]+)"/g)].map((m) => readFileSync(join(outDir, m[1]), "utf8")).join("");
+    expect(css).toContain(".docs-theme"); // docs.css, imported by docs/layout
+    expect(css).toContain(".docs-nav"); // docs/layout's <style>
+    expect(css).toMatch(/article\.svelte-[\w-]+\{color:(goldenrod|#daa520)/); // the page's own <style>
+    expect(page).toContain("Static docs page");
+    expect(page).not.toContain("<script");
+    expect(page).not.toContain("modulepreload");
+  });
+
+  it("drops the inline copies of the styles it links", () => {
+    expect(page).not.toMatch(/<style id="svelte-/);
   });
 });
 

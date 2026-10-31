@@ -33,6 +33,7 @@ describe("analyzeSource", () => {
     expect(real.extracted.imports.map((i) => i.specifier)).toEqual(["../db"]);
   });
 
+
   it("a module-only script keeps the page static", () => {
     expect(analyzeSource('<script module lang="ts">\n  export type Data = { a: 1 };\n</script>\n<p>x</p>\n').hasScript).toBe(false);
     expect(analyzeSource('<script context="module">\n  export const n = 1;\n</script>\n<p>x</p>\n').hasScript).toBe(false);
@@ -61,9 +62,9 @@ describe("pages() plugin", () => {
     expect(plugin.hasClient("inexistente")).toBe(false);
   });
 
-  it("input() only includes JS entries via virtual ids", () => {
+  it("input() has a virtual entry per page (static ones for their CSS)", () => {
     const input = makePlugin().input();
-    expect(Object.keys(input)).toEqual(["admin"]);
+    expect(Object.keys(input)).toEqual(["admin", "home"]);
     expect(input.admin).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "admin");
   });
 
@@ -235,9 +236,36 @@ describe("pages() plugin", () => {
     });
   });
 
+  describe("serverOnly", () => {
+    function loader(options: { serverOnly?: string[] | false } = {}, root = pkgRoot) {
+      const plugin = pages({ pagesDir: "test/fixtures/pages", ...options });
+      plugin.configResolved({ root } as never);
+      return (file: string, ssr = false) => () => plugin.load(join(root, file), { ssr } as never);
+    }
+
+    it("fails when client code reaches *.server.* or a server/ folder, like SvelteKit", () => {
+      const load = loader();
+      expect(load("src/lib/server/db.ts")).toThrow(/src\/lib\/server\/db\.ts is server-only but reached client code/);
+      expect(load("src/db.server.ts")).toThrow(/server-only/);
+      expect(load("src/server/app.ts?v=1")).toThrow(/server-only/);
+      expect(load("src/lib/db.ts")()).toBeNull();
+    });
+
+    it("the server build, node_modules and the folders above the root are fine", () => {
+      expect(loader()("src/lib/server/db.ts", true)()).toBeNull();
+      expect(loader()("node_modules/some-lib/server/index.js")()).toBeNull();
+      expect(loader({}, resolve(pkgRoot, "server", "app"))("src/lib/db.ts")()).toBeNull();
+    });
+
+    it("adds the app's own globs; false turns the check off", () => {
+      expect(loader({ serverOnly: ["src/lib/db/**"] })("src/lib/db/index.ts")).toThrow(/server-only/);
+      expect(loader({ serverOnly: false })("src/lib/server/db.ts")()).toBeNull();
+    });
+  });
+
   describe("stylesEntry", () => {
-    function stylesPlugin(stylesEntry?: string) {
-      const plugin = pages({ pagesDir: "test/fixtures/pages", ...(stylesEntry ? { stylesEntry } : {}) });
+    function stylesPlugin(stylesEntry?: string | false) {
+      const plugin = pages({ pagesDir: "test/fixtures/pages", ...(stylesEntry !== undefined ? { stylesEntry } : {}) });
       plugin.configResolved({ root: pkgRoot } as never);
       plugin.buildStart();
       return plugin;
@@ -245,15 +273,44 @@ describe("pages() plugin", () => {
 
     it("input() adds the stylesheet as the `styles` entry", () => {
       const input = stylesPlugin("./src/app.css").input();
-      expect(Object.keys(input)).toEqual(["admin", "styles"]);
+      expect(Object.keys(input)).toEqual(["admin", "home", "styles"]);
       expect(input.styles).toBe(resolve(pkgRoot, "src/app.css"));
     });
 
     it("the virtual manifest hands the path to the shell", () => {
       expect(stylesPlugin("/src/app.css").load(MANIFEST_RESOLVED)).toContain('export const stylesEntry = "src/app.css";');
       expect(stylesPlugin().load(MANIFEST_RESOLVED)).toContain("export const stylesEntry = null;");
-      expect(Object.keys(stylesPlugin().input())).toEqual(["admin"]);
+      expect(Object.keys(stylesPlugin().input())).toEqual(["admin", "home"]);
     });
+
+    it("false tells the shell to link no global stylesheet", () => {
+      expect(stylesPlugin(false).load(MANIFEST_RESOLVED)).toContain("export const stylesEntry = false;");
+      expect(Object.keys(stylesPlugin(false).input())).toEqual(["admin", "home"]);
+    });
+  });
+
+  it("a static page's entry imports its layouts and itself, for their CSS, and runs nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-static-css-"));
+    try {
+      mkdirSync(join(dir, "home"), { recursive: true });
+      writeFileSync(join(dir, "home", "layout.svelte"), '<script>\n  import "../app.css";\n  let { children } = $props();\n</script>\n{@render children()}\n');
+      writeFileSync(join(dir, "home", "index.svelte"), "<h1>static</h1>\n");
+      const plugin = pages({ pagesDir: dir });
+      plugin.configResolved({ root: dir } as never);
+      plugin.buildStart();
+      expect(plugin.input()["home/index"]).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "home/index");
+      const code = plugin.load(String.fromCharCode(0) + ENTRY_PREFIX + "home/index") as string;
+      // Layouts first, page last: the order their CSS applies in.
+      expect(code).toContain('import C0 from "/home/layout.svelte";\nimport C1 from "/home/index.svelte";\n');
+      expect(code).toContain('globalThis[Symbol.for("hono-svelte:css")] = [C0, C1];');
+      expect(code).not.toMatch(/from "svelte"|mount|document/);
+      // Still static for the shell: no client entry, a server loader.
+      const manifest = plugin.load(MANIFEST_RESOLVED) as string;
+      expect(manifest).toContain("export const clientEntries = [];");
+      expect(manifest).toMatch(/"home\/index": \(\) => import\(/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("virtual entry embeds the opaque ids and the mount", () => {

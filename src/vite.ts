@@ -66,8 +66,9 @@ export type PagesOptions = {
    * Declared once here: `input()` adds it to the client build (as `styles`)
    * and the virtual manifest hands it to `shell()` as its `stylesEntry`
    * default — no repeating the path in the Vite config and the server.
+   * `false` = no global stylesheet: the shell links none.
    */
-  stylesEntry?: string;
+  stylesEntry?: string | false;
   /**
    * Interactive pages (with an instance `<script>`) to render on the server
    * and hydrate on the client, instead of shipping an empty root that only
@@ -78,6 +79,15 @@ export type PagesOptions = {
    * @default false
    */
   hydrate?: boolean | string[];
+  /**
+   * Server-only modules, as in SvelteKit: when the client build (or the dev
+   * client) reaches one — pages, layouts and everything they import end up
+   * in public files — it fails instead of shipping the code. Globs relative
+   * to the Vite root, added to the defaults `**\/*.server.*` and
+   * `**\/server/**` (`node_modules` excluded). `false` turns the check off.
+   * @default []
+   */
+  serverOnly?: string[] | false;
 };
 
 export type PagesPlugin = Plugin & {
@@ -349,8 +359,26 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   const hydrated = (entryName: string): boolean =>
     options.hydrate === true || (Array.isArray(options.hydrate) && options.hydrate.includes(entryName));
   const header = options.generatedHeader ?? "// @generated - hono-svelte, do not edit.";
-  const stylesEntry = options.stylesEntry ? normalizeSlashes(options.stylesEntry).replace(/^(\.?\/)+/, "") : undefined;
+  const stylesEntry = options.stylesEntry
+    ? normalizeSlashes(options.stylesEntry).replace(/^(\.?\/)+/, "")
+    : options.stylesEntry === false
+      ? false
+      : undefined;
   const filter = createFilter(["**/*.svelte"], ignore, { resolve: pagesDir });
+  // Matched against root-relative paths: a project that lives inside a `server/` folder is fine.
+  const serverOnlyFilter =
+    options.serverOnly === false
+      ? () => false
+      : createFilter(["**/*.server.*", "**/server/**", ...(options.serverOnly ?? [])], "**/node_modules/**", { resolve: false });
+  const rootRelative = (id: string): string => normalizeSlashes(relative(viteRoot ?? process.cwd(), id.split("?")[0]));
+  const isServerOnly = (id: string): boolean => !id.startsWith("\0") && serverOnlyFilter(rootRelative(id));
+  const serverOnlyError = (id: string, importers: readonly string[]): Error =>
+    new Error(
+      `hono-svelte: ${rootRelative(id)} is server-only but reached client code` +
+        (importers.length > 0 ? `, imported by ${importers.map(rootRelative).join(", ")}` : "") +
+        ". Pages, layouts and what they import are bundled into public files; pass server data " +
+        "through `layoutData` or the route's `data` instead (or adjust `pages({ serverOnly })`).",
+    );
 
   let cachedPages: PageSpec[] | null = null;
   let cachedLayouts: LayoutSpec[] = [];
@@ -480,9 +508,9 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
     cachedInput = {};
     let jsCount = 0;
     for (const page of cachedPages) {
-      if (page.isStatic) continue;
+      // Static pages get an entry too, for their CSS only (see entrySource).
       cachedInput[page.entryName] = ENTRY_RESOLVED_PREFIX + page.entryName;
-      jsCount++;
+      if (!page.isStatic) jsCount++;
     }
     if (log) {
       const staticCount = cachedPages.length - jsCount;
@@ -727,6 +755,19 @@ function layoutImportPath(layout: LayoutSpec): string {
   }
 
   function entrySource(page: PageSpec): string {
+    if (page.isStatic) {
+      // CSS-only entry, as SvelteKit builds a client node per route: the
+      // bundler collects the CSS of the layouts, the page and everything they
+      // import, and the shell links it. The JS chunk is never loaded. The
+      // assignment keeps the components in the bundle: Vite drops entry
+      // exports, and `"sideEffects": false` would drop bare imports.
+      const files = [...page.layouts.map((l) => layoutImportPath(layoutByName(l))), pageImportPath(page)];
+      return (
+        header + " CSS of " + page.file + "\n" +
+        files.map((f, i) => `import C${i} from ${JSON.stringify(f)};\n`).join("") +
+        'globalThis[Symbol.for("hono-svelte:css")] = [' + files.map((_, i) => "C" + i).join(", ") + "];\n"
+      );
+    }
     const ids = getIds(page.entryName);
     // Client entries mount the layout chain around the page (see
     // entryMountSource); hydrated pages hydrate it when the root holds the
@@ -853,7 +894,20 @@ function entryMountSource(page: PageSpec): string {
           return withInjectedCss(readFileSync(file, "utf8"));
         }
       }
+      // Dev client (the build checks in buildEnd, once the importers are known).
+      if (!isSsr && viteCommand !== "build" && isServerOnly(id)) {
+        const graph = (this as { environment?: { moduleGraph?: { getModuleById: (id: string) => { importers: Set<{ id: string | null }> } | undefined } } })
+          .environment?.moduleGraph;
+        throw serverOnlyError(id, [...(graph?.getModuleById(id)?.importers ?? [])].flatMap((m) => m.id ?? []));
+      }
       return null;
+    },
+    buildEnd(error) {
+      const consumer = (this as { environment?: { config?: { consumer?: string } } }).environment?.config?.consumer;
+      if (error || viteCommand !== "build" || consumer === "server") return;
+      for (const id of this.getModuleIds()) {
+        if (isServerOnly(id)) throw serverOnlyError(id, this.getModuleInfo(id)?.importers ?? []);
+      }
     },
     configureServer(server: ViteDevServer) {
       server.watcher.add(pagesDir);

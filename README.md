@@ -98,7 +98,11 @@ The rule is simple: **if the `.svelte` file has no `<script>`, the page ships as
 
 Server-rendered components (static pages and the layouts wrapping them) have no client bundle, so `pages()` compiles them for the server with `css: "injected"`: their `<style>` blocks arrive inline in the `<head>`. An explicit `<svelte:options css="...">` in the component wins.
 
-Hydrated pages (`pages({ hydrate })`) are styled before their script runs. In production the shell links the entry's CSS files (the page, its layouts and their components), so it drops the duplicate `<style>` blocks the server render inlines. In dev, Vite would only inject that CSS once the client JS loads, so the plugin collects the CSS of the page and its layouts (component `<style>` blocks and `.css` imports) and the shell inlines it as `<style data-vite-dev-id>`: Vite's client adopts those tags, so nothing is duplicated and hot updates keep working.
+Stylesheets a layout or any component it uses imports (`import "../../app.css"`) reach static pages too, still without JS. Like SvelteKit's per-route client nodes, every static page gets a CSS-only entry in the client build: it imports the layouts and the page, so the bundler collects all their CSS (component `<style>` blocks and `.css` imports, followed through every import) into hashed files the shell links. Its JS chunk is never linked or loaded. This lets each page tree carry its own CSS — e.g. `honoSvelte({ styles: false })`, `admin/layout.svelte` importing `admin.css` and `home/layout.svelte` importing `app.css`. Layouts of static pages are therefore compiled for the client too, as the layouts of interactive pages always were: server data reaches components through `layoutData` or the route's `data`, never through an import.
+
+Server-only modules are guarded as in SvelteKit: when pages, layouts or anything they import reach a file named `*.server.*` or inside a `server/` folder, the client build fails (nothing is written) and the dev client refuses to serve it, naming the module and its importer. Code there would otherwise land in a public file under `static/`. Add the app's own server modules with `pages({ serverOnly: ["src/lib/db/**"] })` (globs relative to the Vite root; also on `honoSvelte()`). `import type` is erased and never trips it.
+
+Every server-rendered page — static, or hydrated (`pages({ hydrate })`) before its script runs — is styled up front. In production the shell links the entry's CSS files (the page, its layouts and their components), so it drops the duplicate `<style>` blocks the server render inlines. In dev the plugin collects the same CSS from Vite's module graph and the shell inlines it as `<style data-vite-dev-id>` (again without the injected duplicates): Vite's client adopts those tags on hydrated pages, so hot updates keep working.
 
 Files starting with `_` and `layout.svelte` are ignored (convention for partials and layouts).
 
@@ -375,7 +379,7 @@ Vite config factory (`hono-svelte/vite`): `export default honoSvelte({ … })`. 
 | Option | Default | Description |
 |---|---|---|
 | `entry` | `"src/routes/index.ts"` | Server entry (the module exporting the Hono app) |
-| `styles` | `"src/styles.css"` | Global stylesheet (`false` = none), forwarded as `pages({ stylesEntry })` — the shell picks it up on its own |
+| `styles` | `"src/styles.css"` | Global stylesheet (`false` = none: no input, and the shell links no global sheet), forwarded as `pages({ stylesEntry })` — the shell picks it up on its own |
 | `runtime` | auto | `"bun"` or `"node"`: picks `@hono/vite-build/<runtime>` and the dev-server adapter. Auto = Bun when Vite runs under Bun, was started by `bun run`, or a `bun.lock` exists. Pin it when the build and the server use different runtimes (`npm run build` + `bun dist/index.js`): a node bundle run under Bun fails with `Expected a Response object` |
 | `outDir` | `"dist"` | Output of both builds (client assets + server bundle) |
 | — | — | Plain `vite build` builds the `client` environment then `ssr` (Vite environments); `--mode client` builds the client alone |
@@ -398,7 +402,7 @@ Hono middleware that provides `c.render(entry, data?)` and `c.setHead(head)` on 
 | `assets` | embedded manifest, else `"/static"` | String prefix, Vite manifest object, or resolver `(entry) => url`. When the client build emits a manifest (`build.manifest: true`, on with `honoSvelte()`), `pages()` embeds it in the server build and the shell uses it automatically |
 | `isProd` | auto | Force prod/dev asset behavior |
 | `stylesHref` | from `stylesEntry` | Global stylesheet href (or an `(isProd) => string` function); overrides `stylesEntry` |
-| `stylesEntry` | `"src/styles.css"` | Source of the global stylesheet: dev links `/<stylesEntry>`, prod resolves the hashed file from the manifest in `assets` (fallback `/static/styles.css`) |
+| `stylesEntry` | `pages({ stylesEntry })`, else `"src/styles.css"` | Source of the global stylesheet: dev links `/<stylesEntry>`, prod resolves the hashed file from the manifest in `assets` (fallback `/static/styles.css`). `false` links none |
 | `styles` | `[]` | Extra CSS hrefs emitted per response |
 | `head` | `""` | Extra HTML in `<head>` (fonts, meta tags) |
 | `nonce` | — | CSP nonce string or `(c) => string` (applied to shell `<script>`/`<link>`) |
@@ -445,8 +449,9 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 | `dts` | `false` | Typed `c.render` entries: `true` writes `src/hono-svelte-entries.d.ts`, a string sets a custom path |
 | `alwaysClient` | `[]` | Pages that always get JS, even without `<script>` |
 | `clientManifest` | `"dist/.vite/manifest.json"` | Client build manifest embedded into the server build (`vite build` only; missing file = nothing embedded). `shell()` then resolves hashed assets without `assets`. `false` disables |
-| `stylesEntry` | — | Global stylesheet (e.g. `"src/app.css"`): `input()` adds it as `styles` and `shell()` uses it as its `stylesEntry` default — one place for the path |
+| `stylesEntry` | — | Global stylesheet (e.g. `"src/app.css"`): `input()` adds it as `styles` and `shell()` uses it as its `stylesEntry` default — one place for the path. `false` = none, and the shell links no global sheet |
 | `hydrate` | `false` | Server-render interactive pages and hydrate them: `true` for all, or a list of entries — see [Server rendering interactive pages](#server-rendering-interactive-pages) |
+| `serverOnly` | `[]` | Extra server-only globs (relative to the Vite root) on top of `**/*.server.*` and `**/server/**`: client code reaching one fails the build and the dev client. `false` turns the check off |
 
 Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `dataTypes()` (extracted `Data` declarations), `types()` (entry union), `typeDeclarations()` (hono module snippet), `dtsPath()` / `writeDts()` (generated `.d.ts`), `validateConfig()` (fail fast on bad Vite setup).
 
