@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **feat(vite): server-only modules, as in SvelteKit.** Pages, layouts and
+  everything they import are bundled into public files under `static/`.
+  When that code reaches a module named `*.server.*` or inside a `server/`
+  folder (outside `node_modules`), the client build now fails before writing
+  anything, and the dev client refuses to serve it; the error names the
+  module and its importer. `pages({ serverOnly: [...] })` (also on
+  `honoSvelte()`) adds the app's own globs; `false` turns it off. An app
+  that already imports such a file into client code will fail to build:
+  move the data to `layoutData` / the route's `data`, or opt out.
 - **fix: `styles: false` links no global stylesheet.** With
   `honoSvelte({ styles: false })` (or `pages({ stylesEntry: false })`) the
   shell still linked `/src/styles.css` in dev and `/static/styles.css` in

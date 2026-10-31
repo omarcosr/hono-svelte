@@ -79,6 +79,15 @@ export type PagesOptions = {
    * @default false
    */
   hydrate?: boolean | string[];
+  /**
+   * Server-only modules, as in SvelteKit: when the client build (or the dev
+   * client) reaches one — pages, layouts and everything they import end up
+   * in public files — it fails instead of shipping the code. Globs relative
+   * to the Vite root, added to the defaults `**\/*.server.*` and
+   * `**\/server/**` (`node_modules` excluded). `false` turns the check off.
+   * @default []
+   */
+  serverOnly?: string[] | false;
 };
 
 export type PagesPlugin = Plugin & {
@@ -356,6 +365,20 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       ? false
       : undefined;
   const filter = createFilter(["**/*.svelte"], ignore, { resolve: pagesDir });
+  // Matched against root-relative paths: a project that lives inside a `server/` folder is fine.
+  const serverOnlyFilter =
+    options.serverOnly === false
+      ? () => false
+      : createFilter(["**/*.server.*", "**/server/**", ...(options.serverOnly ?? [])], "**/node_modules/**", { resolve: false });
+  const rootRelative = (id: string): string => normalizeSlashes(relative(viteRoot ?? process.cwd(), id.split("?")[0]));
+  const isServerOnly = (id: string): boolean => !id.startsWith("\0") && serverOnlyFilter(rootRelative(id));
+  const serverOnlyError = (id: string, importers: readonly string[]): Error =>
+    new Error(
+      `hono-svelte: ${rootRelative(id)} is server-only but reached client code` +
+        (importers.length > 0 ? `, imported by ${importers.map(rootRelative).join(", ")}` : "") +
+        ". Pages, layouts and what they import are bundled into public files; pass server data " +
+        "through `layoutData` or the route's `data` instead (or adjust `pages({ serverOnly })`).",
+    );
 
   let cachedPages: PageSpec[] | null = null;
   let cachedLayouts: LayoutSpec[] = [];
@@ -871,7 +894,20 @@ function entryMountSource(page: PageSpec): string {
           return withInjectedCss(readFileSync(file, "utf8"));
         }
       }
+      // Dev client (the build checks in buildEnd, once the importers are known).
+      if (!isSsr && viteCommand !== "build" && isServerOnly(id)) {
+        const graph = (this as { environment?: { moduleGraph?: { getModuleById: (id: string) => { importers: Set<{ id: string | null }> } | undefined } } })
+          .environment?.moduleGraph;
+        throw serverOnlyError(id, [...(graph?.getModuleById(id)?.importers ?? [])].flatMap((m) => m.id ?? []));
+      }
       return null;
+    },
+    buildEnd(error) {
+      const consumer = (this as { environment?: { config?: { consumer?: string } } }).environment?.config?.consumer;
+      if (error || viteCommand !== "build" || consumer === "server") return;
+      for (const id of this.getModuleIds()) {
+        if (isServerOnly(id)) throw serverOnlyError(id, this.getModuleInfo(id)?.importers ?? []);
+      }
     },
     configureServer(server: ViteDevServer) {
       server.watcher.add(pagesDir);

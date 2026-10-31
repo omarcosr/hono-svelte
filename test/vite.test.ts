@@ -236,6 +236,33 @@ describe("pages() plugin", () => {
     });
   });
 
+  describe("serverOnly", () => {
+    function loader(options: { serverOnly?: string[] | false } = {}, root = pkgRoot) {
+      const plugin = pages({ pagesDir: "test/fixtures/pages", ...options });
+      plugin.configResolved({ root } as never);
+      return (file: string, ssr = false) => () => plugin.load(join(root, file), { ssr } as never);
+    }
+
+    it("fails when client code reaches *.server.* or a server/ folder, like SvelteKit", () => {
+      const load = loader();
+      expect(load("src/lib/server/db.ts")).toThrow(/src\/lib\/server\/db\.ts is server-only but reached client code/);
+      expect(load("src/db.server.ts")).toThrow(/server-only/);
+      expect(load("src/server/app.ts?v=1")).toThrow(/server-only/);
+      expect(load("src/lib/db.ts")()).toBeNull();
+    });
+
+    it("the server build, node_modules and the folders above the root are fine", () => {
+      expect(loader()("src/lib/server/db.ts", true)()).toBeNull();
+      expect(loader()("node_modules/some-lib/server/index.js")()).toBeNull();
+      expect(loader({}, resolve(pkgRoot, "server", "app"))("src/lib/db.ts")()).toBeNull();
+    });
+
+    it("adds the app's own globs; false turns the check off", () => {
+      expect(loader({ serverOnly: ["src/lib/db/**"] })("src/lib/db/index.ts")).toThrow(/server-only/);
+      expect(loader({ serverOnly: false })("src/lib/server/db.ts")()).toBeNull();
+    });
+  });
+
   describe("stylesEntry", () => {
     function stylesPlugin(stylesEntry?: string | false) {
       const plugin = pages({ pagesDir: "test/fixtures/pages", ...(stylesEntry !== undefined ? { stylesEntry } : {}) });
