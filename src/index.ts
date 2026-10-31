@@ -501,6 +501,8 @@ type ManifestMeta = {
   __layouts?: Record<string, SsrPageLoader>;
   __clientEntries?: string[];
   __allEntries?: string[];
+  /** Layout chain per entry, set when pages come from several folders (a layout wraps only its own folder). */
+  __layoutChains?: Record<string, string[]>;
 };
 const metaOf = (pages: Record<string, SsrPageLoader>): ManifestMeta => pages as ManifestMeta;
 
@@ -552,8 +554,11 @@ export function shell(options: ShellOptions = {}) {
   const knownSet = known ? new Set(known) : undefined;
   const isSsrEntry = (entry: string): boolean => ssrPages[entry] !== undefined && !clientEntries.has(entry);
   const isHydratedEntry = (entry: string): boolean => ssrPages[entry] !== undefined && clientEntries.has(entry);
+  const layoutChains = metaOf(ssrPages).__layoutChains ?? metaOf(autoSsrPages).__layoutChains;
+  const chainOf = (entry: string, available: string[]): string[] =>
+    layoutChains?.[entry]?.filter((name) => available.includes(name)) ?? layoutChain(entry, available);
   const layoutLoaders = memoByEntry((entry) =>
-    layoutChain(entry, Object.keys(ssrLayouts)).flatMap((name) => ssrLayouts[name] ?? []),
+    chainOf(entry, Object.keys(ssrLayouts)).flatMap((name) => ssrLayouts[name] ?? []),
   );
   // Prefetch targets: other entries that have a JS chunk.
   const prefetchTargets = memoByEntry((entry): PrefetchTarget[] =>
@@ -568,7 +573,7 @@ export function shell(options: ShellOptions = {}) {
     }
   }
   const layoutDataChain = memoByEntry((entry) =>
-    layoutChain(entry, Object.keys(layoutDataLoaders)).map((name) => layoutDataLoaders[name] as LayoutDataLoader),
+    chainOf(entry, Object.keys(layoutDataLoaders)).map((name) => layoutDataLoaders[name] as LayoutDataLoader),
   );
 
   /**

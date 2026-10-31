@@ -151,14 +151,14 @@ describe("regressions", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nonce() threw"), expect.any(Error));
   });
 
-  it("pagesDir outside the Vite root fails with a clear (English) error", () => {
+  it("pagesDir outside the Vite root is imported by its absolute path", () => {
     const dir = mkdtempSync(join(tmpdir(), "hs-outside-"));
     try {
       writeFileSync(join(dir, "p.svelte"), "<script>let x = 1;</script>{x}\n");
       const plugin = pages({ pagesDir: dir });
       plugin.configResolved({ root: join(dir, "app") } as never);
-      expect(() => (plugin.load as (id: string) => string)(String.fromCharCode(0) + "virtual:hono-svelte/entry/p")).toThrowError(
-        /pagesDir must be inside the Vite root/,
+      expect((plugin.load as (id: string) => string)(String.fromCharCode(0) + "virtual:hono-svelte/entry/p")).toContain(
+        `import Page from ${JSON.stringify(join(dir, "p.svelte").replace(/\\/g, "/"))};`,
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
