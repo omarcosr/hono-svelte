@@ -382,6 +382,9 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     plugins: [svelte(), appPages, build({ entry: "src/routes/index.ts", staticRoot: "./dist" })],
+    // Same asset names as the client build: an asset the server renders (`import font from "./font.woff2?url"`)
+    // must point at the published file, not at Vite's default `/assets/…`.
+    build: { rollupOptions: { output: { assetFileNames: "static/[name]-[hash][extname]" } } },
   };
 });
 ```

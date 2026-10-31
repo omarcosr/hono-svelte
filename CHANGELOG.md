@@ -13,6 +13,13 @@
   outside the Vite root now works (it used to throw "pagesDir must be inside
   the Vite root"): it is imported by absolute path and added to
   `server.fs.allow` in dev. A single string behaves as before.
+- **fix(preset): server-rendered asset URLs match the client build.** An
+  asset imported with `?url` in a page or layout (e.g. a font preload)
+  rendered as `/assets/<name>-<hash>.<ext>` on the server, a 404, while the
+  client build publishes `/static/<name>-<hash>.<ext>`. `honoSvelte()` now
+  gives the server build the client's asset names. Manual Vite configs set
+  `build.rollupOptions.output.assetFileNames` on the server build the same
+  way (see the README).
 
 ## 0.10.0
 
