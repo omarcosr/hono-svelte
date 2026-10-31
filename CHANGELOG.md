@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **docs: the server-only guard matches names only.** The README now warns
+  that server code imported by a page or layout under any other path than
+  `*.server.*` / `server/` (or a `pages({ serverOnly })` glob) is bundled into
+  a public `static/` file without an error.
+
 ## 0.10.0
 
 - **feat(vite): server-only modules, as in SvelteKit.** Pages, layouts and
