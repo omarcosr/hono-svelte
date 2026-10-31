@@ -20,13 +20,21 @@ import {
   type DevStylesheet,
 } from "./virtual.js";
 import { parse } from "svelte/compiler";
-import { createFilter, isCSSRequest, type Plugin, type ViteDevServer } from "vite";
+import { createFilter, isCSSRequest, searchForWorkspaceRoot, type Plugin, type ViteDevServer } from "vite";
 
 export { detectRuntime, honoSvelte } from "./preset.js";
 export type { HonoSvelteConfig, HonoSvelteOptions, HonoSvelteRuntime } from "./preset.js";
 
 export type PagesOptions = {
-  pagesDir?: string;
+  /**
+   * Pages folder, or several (e.g. the app's own plus a shared workspace
+   * package's). Entry names are relative to their folder, each folder keeps
+   * its own layout tree, and the same entry name in two folders is an error.
+   * A folder may sit outside the Vite root.
+   * @default "src/pages"
+   */
+  pagesDir?: string | string[];
+  /** Globs relative to each pages folder. @default ["**\/_*.svelte"] */
   ignore?: string[];
   /** entryNames that always generate client JS, even without a `<script>`. */
   alwaysClient?: string[];
@@ -119,6 +127,8 @@ export type PagesPlugin = Plugin & {
 
 export type LayoutSpec = {
   entryName: string;
+  /** Pages folder it belongs to: it wraps only pages of the same folder. */
+  dir: string;
   file: string;
   absFile: string;
   /** Extracted `Data` declaration (typed `layoutData` loader in the dts), if any. */
@@ -189,6 +199,12 @@ export async function collectDevCss(server: ViteDevServer, files: string[]): Pro
   return sheets;
 }
 
+function isOutside(root: string, absFile: string): boolean {
+  const rel = relative(root, absFile);
+  // Another drive on Windows makes relative() return an absolute path.
+  return rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel);
+}
+
 function entryNameFromFile(file: string): string {
   return normalizeSlashes(file).slice(0, -".svelte".length);
 }
@@ -252,6 +268,7 @@ type SourceInfo = {
 
 type PageSpec = {
   entryName: string;
+  dir: string;
   file: string;
   absFile: string;
   isStatic: boolean;
@@ -352,7 +369,7 @@ function bundleSelf(external: ExternalOption, root: string): ExternalOption {
 }
 
 export function pages(options: PagesOptions = {}): PagesPlugin {
-  const pagesDir = resolve(options.pagesDir ?? "src/pages");
+  const pagesDirs = [options.pagesDir ?? "src/pages"].flat().map((dir) => resolve(dir));
   const ignore = options.ignore ?? DEFAULT_IGNORE;
   const layoutsEnabled = options.layouts ?? true;
   const alwaysClient = new Set(options.alwaysClient ?? []);
@@ -364,14 +381,18 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     : options.stylesEntry === false
       ? false
       : undefined;
-  const filter = createFilter(["**/*.svelte"], ignore, { resolve: pagesDir });
+  const filters = new Map(pagesDirs.map((dir) => [dir, createFilter(["**/*.svelte"], ignore, { resolve: dir })]));
   // Matched against root-relative paths: a project that lives inside a `server/` folder is fine.
   const serverOnlyFilter =
     options.serverOnly === false
       ? () => false
       : createFilter(["**/*.server.*", "**/server/**", ...(options.serverOnly ?? [])], "**/node_modules/**", { resolve: false });
   const rootRelative = (id: string): string => normalizeSlashes(relative(viteRoot ?? process.cwd(), id.split("?")[0]));
-  const isServerOnly = (id: string): boolean => !id.startsWith("\0") && serverOnlyFilter(rootRelative(id));
+  // `**` never matches `..`: with several folders, a module outside the root (a sibling workspace package)
+  // is matched below the common ancestor too. One folder keeps the root-only check it always had.
+  const isServerOnly = (id: string): boolean =>
+    !id.startsWith("\0") &&
+    (serverOnlyFilter(rootRelative(id)) || (pagesDirs.length > 1 && serverOnlyFilter(rootRelative(id).replace(/^(\.\.\/)+/, ""))));
   const serverOnlyError = (id: string, importers: readonly string[]): Error =>
     new Error(
       `hono-svelte: ${rootRelative(id)} is server-only but reached client code` +
@@ -433,46 +454,52 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     return JSON.stringify(manifest);
   }
 
-  function computeLayouts(allFiles: string[]): LayoutSpec[] {
+  function computeLayouts(dir: string, allFiles: string[]): LayoutSpec[] {
     if (!layoutsEnabled) return [];
+    const filter = filters.get(dir) as ReturnType<typeof createFilter>;
     const layouts: LayoutSpec[] = [];
     for (const file of allFiles) {
       if (!file.endsWith("/layout.svelte") && file !== "layout.svelte") continue;
-      if (!filter(pagesDir + "/" + file)) continue;
+      if (!filter(dir + "/" + file)) continue;
       const entryName = entryNameFromFile(file);
-      const absFile = resolve(pagesDir, file);
+      const absFile = resolve(dir, file);
       const { extracted } = sourceInfo(absFile);
-      layouts.push({ entryName, file, absFile, dataType: extracted.declaration ?? undefined, dataImports: extracted.imports });
+      layouts.push({ entryName, dir, file, absFile, dataType: extracted.declaration ?? undefined, dataImports: extracted.imports });
     }
     return layouts.sort((a, b) => a.entryName.localeCompare(b.entryName));
   }
 
-function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
-    return layoutChain(entryName, layouts.map((l) => l.entryName));
+  /** Layouts wrap only the pages of their own folder. */
+  function chainFor(page: { entryName: string; dir: string }, layouts: LayoutSpec[]): string[] {
+    return layoutChain(page.entryName, layouts.filter((l) => l.dir === page.dir).map((l) => l.entryName));
   }
 
   function computePages(): PageSpec[] {
-    const allFiles = (globSync("**/*.svelte", { cwd: pagesDir }) as string[])
-      .map(normalizeSlashes)
-      .sort();
-    cachedLayouts = computeLayouts(allFiles);
-    const files = allFiles.filter((f) => filter(pagesDir + "/" + f));
-    const seen = new Set<string>();
+    const filesByDir = pagesDirs.map((dir) => {
+      const allFiles = (globSync("**/*.svelte", { cwd: dir }) as string[]).map(normalizeSlashes).sort();
+      return { dir, allFiles, files: allFiles.filter((f) => (filters.get(dir) as ReturnType<typeof createFilter>)(dir + "/" + f)) };
+    });
+    cachedLayouts = filesByDir.flatMap(({ dir, allFiles }) => computeLayouts(dir, allFiles));
+    // Pages and layouts of every folder share one name space: `c.render()` and the layout maps look them up by name.
+    const seen = new Map<string, string>();
+    const claim = (entryName: string, absFile: string): void => {
+      const other = seen.get(entryName);
+      if (other) throw new Error(`hono-svelte: duplicate entry "${entryName}": ${other} and ${absFile}`);
+      seen.set(entryName, absFile);
+    };
+    for (const layout of cachedLayouts) claim(layout.entryName, layout.absFile);
     const result: PageSpec[] = [];
-    for (const file of files) {
+    for (const { dir, file } of filesByDir.flatMap(({ dir, files }) => files.map((file) => ({ dir, file })))) {
       const entryName = entryNameFromFile(file);
       if (isLayoutEntry(entryName)) continue;
-      if (seen.has(entryName)) {
-        throw new Error(`hono-svelte: duplicate entry: ${entryName}`);
-      }
-      seen.add(entryName);
-      const absFile = resolve(pagesDir, file);
+      const absFile = resolve(dir, file);
+      claim(entryName, absFile);
       // Automatic zero-JS: a page without <script> has no interactivity,
       // so the shell renders it on the server and the client downloads no JS.
       // Exception: layout chain is resolved for EVERY page (even static ones)
       // because the SHELL decides SSR-vs-client at request time:
       // static+layouts => SSR page, then wrap in layout(s).
-      const layouts = chainFor(entryName, cachedLayouts);
+      const layouts = chainFor({ entryName, dir }, cachedLayouts);
       // Single source of truth: when layouts are enabled, the shell composes
       // Page inside LayoutN...Layout0 automatically (SSR or client mount). A page
       // that ALSO imports its layout manually would render it twice
@@ -498,7 +525,7 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
       // imports are carried along as `import("…")` queries (see dataDeclaration).
       const dataType = info.extracted.declaration ?? undefined;
       const hydrate = !isStatic && hydrated(entryName);
-      result.push({ entryName, file, absFile, isStatic, hydrate, layouts, dataType, dataImports: info.extracted.imports });
+      result.push({ entryName, dir, file, absFile, isStatic, hydrate, layouts, dataType, dataImports: info.extracted.imports });
     }
     return result;
   }
@@ -669,12 +696,9 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
 
 function rootImportPath(absFile: string): string {
     const root = viteRoot ?? process.cwd();
-    const rel = relative(root, absFile);
-    // Another drive on Windows makes relative() return an absolute path.
-    if (rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel)) {
-      throw new Error(`hono-svelte: pagesDir must be inside the Vite root (${root}): ${absFile}`);
-    }
-    return "/" + normalizeSlashes(rel);
+    // Outside the root (a sibling workspace package): Vite resolves the absolute path.
+    if (isOutside(root, absFile)) return normalizeSlashes(absFile);
+    return "/" + normalizeSlashes(relative(root, absFile));
   }
 
   function pageImportPath(page: PageSpec): string {
@@ -750,6 +774,11 @@ function layoutImportPath(layout: LayoutSpec): string {
       "ssrPages.__allEntries = allEntries;",
       "ssrPages.__layouts = ssrLayouts;",
       "ssrPages.__clientEntries = clientEntries;",
+      // Several folders: the shell takes each page's chain from here, since a
+      // layout wraps only its own folder (one folder: the name rule is the same).
+      ...(pagesDirs.length > 1
+        ? ["ssrPages.__layoutChains = " + JSON.stringify(Object.fromEntries(all.map((p) => [p.entryName, p.layouts]))) + ";"]
+        : []),
       "",
     ].join("\n");
   }
@@ -841,10 +870,14 @@ function entryMountSource(page: PageSpec): string {
     // ships `.svelte` sources only loads once compiled into the bundle.
     config: {
       order: "post",
-      handler(config) {
+      handler(config, env) {
         const root = resolve(config.root ?? process.cwd());
         const libs = dropSelfFromSsrExternal(config as SsrExternalConfig, root);
-        return { ssr: { noExternal: [SELF, ...libs] } };
+        // The dev client fetches pages outside the root through `/@fs/`. A set `allow` replaces Vite's
+        // default (the workspace root), so that default is kept unless the app set its own (which merges).
+        const outside = env?.command === "serve" ? pagesDirs.filter((dir) => isOutside(root, dir)) : [];
+        const allow = outside.length > 0 ? [...(config.server?.fs?.allow ? [] : [searchForWorkspaceRoot(root)]), ...outside] : undefined;
+        return { ssr: { noExternal: [SELF, ...libs] }, ...(allow ? { server: { fs: { allow } } } : {}) };
       },
     },
     options(input) {
@@ -910,7 +943,7 @@ function entryMountSource(page: PageSpec): string {
       }
     },
     configureServer(server: ViteDevServer) {
-      server.watcher.add(pagesDir);
+      server.watcher.add(pagesDirs);
       // The shell inlines this CSS into server-rendered pages (see `collectDevCss`).
       const collect: DevCssCollector = async (entryName) => {
         const page = listPages().find((p) => p.entryName === entryName);
@@ -919,10 +952,12 @@ function entryMountSource(page: PageSpec): string {
         return collectDevCss(server, [...layoutFiles, page.absFile]);
       };
       (globalThis as Record<symbol, unknown>)[DEV_CSS_KEY] = collect;
-      const isPagePath = (file: string): boolean => {
-        const rel = normalizeSlashes(relative(pagesDir, file));
-        return rel.length > 0 && !rel.startsWith("..") && rel.endsWith(".svelte");
-      };
+      const isPagePath = (file: string): boolean =>
+        file.endsWith(".svelte") &&
+        pagesDirs.some((dir) => {
+          const rel = normalizeSlashes(relative(dir, file));
+          return rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel);
+        });
       const onMaybeStructural = (): void => {
         const before = stateKey();
         cachedPages = null;
@@ -1005,7 +1040,7 @@ function entryMountSource(page: PageSpec): string {
           "hono-svelte: the pages() plugin is missing from the client build. Add appPages to the mode === 'client' config.",
         );
       }
-      if (!existsSync(pagesDir)) {
+      for (const pagesDir of pagesDirs.filter((dir) => !existsSync(dir))) {
         issues.push(
           `hono-svelte: pagesDir does not exist: ${pagesDir}. Set pages({ pagesDir }) or create the folder.`,
         );

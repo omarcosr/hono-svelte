@@ -62,6 +62,7 @@
     "test:e2e": "npm run build && cd e2e && npm run build && npm test"
   },
   "devDependencies": {
+    "@hono/vite-build": "^1.11.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@types/node": "^24.19.2",
     "@vitest/coverage-v8": "^5.0.1",

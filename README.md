@@ -106,6 +106,22 @@ Every server-rendered page — static, or hydrated (`pages({ hydrate })`) before
 
 Files starting with `_` and `layout.svelte` are ignored (convention for partials and layouts).
 
+### Pages from several folders
+
+`pagesDir` also takes a list, e.g. for a monorepo where every storefront shares a core package's admin pages:
+
+```ts
+// apps/shop/vite.config.ts
+export default honoSvelte({ pagesDir: ["src/pages", "../../packages/core/src/pages"] });
+```
+
+- Entry names stay relative to their own folder: `packages/core/src/pages/admin/users/index.svelte` is `admin/users/index`, as if it lived in `src/pages`.
+- The same entry name in two folders fails the build (and the dev server), naming both files. Layouts count too: two folders cannot both have a root `layout.svelte`.
+- A `layout.svelte` wraps only the pages below it in its own folder: the app's root layout does not wrap the core's admin pages.
+- Everything else covers every folder: `ignore`, the generated `.d.ts` (written in the app, as before), dev discovery and reload, both builds, static pages and their CSS, `hydrate` and the server-only guard (which then also checks `*.server.*` and `server/` modules outside the Vite root).
+- A folder may sit outside the Vite root: it is imported by its absolute path, and in dev it is added to `server.fs.allow` (next to Vite's default workspace root, or to your own list).
+- Paths resolve from the working directory, which is the Vite root when you run Vite from the app.
+
 ## Passing data to the page
 
 Small, public initial data (plan name, title, preferences) goes in `data` and arrives via `$props()` — no extra request.
@@ -366,6 +382,9 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     plugins: [svelte(), appPages, build({ entry: "src/routes/index.ts", staticRoot: "./dist" })],
+    // Same asset names as the client build: an asset the server renders (`import font from "./font.woff2?url"`)
+    // must point at the published file, not at Vite's default `/assets/…`.
+    build: { rollupOptions: { output: { assetFileNames: "static/[name]-[hash][extname]" } } },
   };
 });
 ```
@@ -443,8 +462,8 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 
 | Option | Default | Description |
 |---|---|---|
-| `pagesDir` | `"src/pages"` | Pages folder |
-| `ignore` | `["**/_*.svelte"]` | Ignored patterns (`layout.svelte` is a layout, not a page) |
+| `pagesDir` | `"src/pages"` | Pages folder, or a list of them — see [Pages from several folders](#pages-from-several-folders) |
+| `ignore` | `["**/_*.svelte"]` | Ignored patterns, relative to each pages folder (`layout.svelte` is a layout, not a page) |
 | `layouts` | `true` | Nested `<dir>/layout.svelte` support (`false` = legacy ignore) |
 | `dts` | `false` | Typed `c.render` entries: `true` writes `src/hono-svelte-entries.d.ts`, a string sets a custom path |
 | `alwaysClient` | `[]` | Pages that always get JS, even without `<script>` |

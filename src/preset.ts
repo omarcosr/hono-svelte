@@ -57,6 +57,9 @@ export type HonoSvelteConfig = ((env: ConfigEnv) => Promise<UserConfig>) & {
   pages: PagesPlugin;
 };
 
+/** Client asset names; the server build uses the same so both builds agree on every asset URL. */
+const ASSET_FILE_NAMES = "static/[name]-[hash][extname]";
+
 const PAGES_KEYS: (keyof PagesOptions)[] = ["pagesDir", "ignore", "alwaysClient", "generatedHeader", "layouts", "dts", "clientManifest", "hydrate", "serverOnly"];
 
 function isModuleNotFound(err: unknown): boolean {
@@ -235,7 +238,7 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
         output: {
           entryFileNames: "static/[name]-[hash].js",
           chunkFileNames: "static/chunks/[name]-[hash].js",
-          assetFileNames: "static/[name]-[hash][extname]",
+          assetFileNames: ASSET_FILE_NAMES,
         },
       },
     });
@@ -272,7 +275,9 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
       builder: {},
       environments: {
         client: { consumer: "client", build: clientBuild() },
-        ssr: { consumer: "server" },
+        // An asset the server renders (`?url`, `new URL(…, import.meta.url)`) must point at the file
+        // the client build publishes: same names, or the HTML links a missing `/assets/…` file.
+        ssr: { consumer: "server", build: { rollupOptions: { output: { assetFileNames: ASSET_FILE_NAMES } } } },
       },
     };
   };

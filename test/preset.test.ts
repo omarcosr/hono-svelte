@@ -56,13 +56,11 @@ describe("honoSvelte() preset", () => {
     });
   });
 
+  // @hono/vite-build is a devDependency (test/preset-build.test.ts runs it); the dev server is not installed.
   it("server modes name the missing optional peer", async () => {
     const config = honoSvelte({ pagesDir: "test/fixtures/pages", dts: false });
     await expect(config({ command: "serve", mode: "development", isSsrBuild: false, isPreview: false })).rejects.toThrow(
       /@hono\/vite-dev-server/,
-    );
-    await expect(config({ command: "build", mode: "production", isSsrBuild: true, isPreview: false })).rejects.toThrow(
-      /@hono\/vite-build/,
     );
   });
 
