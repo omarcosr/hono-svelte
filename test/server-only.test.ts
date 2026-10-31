@@ -40,8 +40,12 @@ describe("server-only modules", () => {
   }, 60_000);
 
   it("are refused by the dev client, and still load on the server", async () => {
+    // Its own prebundle cache: dev-css.test.ts runs a dev server in parallel, and a
+    // shared node_modules/.vite gets rewritten under it ("new version of the pre-bundle").
+    const cacheDir = mkdtempSync(join(tmpdir(), "hono-svelte-leak-vite-"));
     const server = await createServer({
       root: fixture,
+      cacheDir,
       configFile: false,
       logLevel: "silent",
       appType: "custom",
@@ -53,6 +57,7 @@ describe("server-only modules", () => {
       expect(((await server.ssrLoadModule("/lib/server/secret.ts")) as { secret: string }).secret).toBe("do-not-ship");
     } finally {
       await server.close();
+      rmSync(cacheDir, { recursive: true, force: true });
     }
   }, 60_000);
 });
