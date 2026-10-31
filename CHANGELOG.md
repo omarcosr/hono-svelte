@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
 - **feat(vite): server-only modules, as in SvelteKit.** Pages, layouts and
   everything they import are bundled into public files under `static/`.
