@@ -33,12 +33,6 @@ describe("analyzeSource", () => {
     expect(real.extracted.imports.map((i) => i.specifier)).toEqual(["../db"]);
   });
 
-  it("lists the stylesheets a component imports (not `?inline` / `?url` strings)", () => {
-    const { cssImports } = analyzeSource(
-      '<script>\n  import "../../app.css";\n  import "some-ui/dist/style.css";\n  import css from "./x.css?inline";\n  import Nav from "./nav.svelte";\n</script>\n<p>x</p>\n',
-    );
-    expect(cssImports).toEqual(["../../app.css", "some-ui/dist/style.css"]);
-  });
 
   it("a module-only script keeps the page static", () => {
     expect(analyzeSource('<script module lang="ts">\n  export type Data = { a: 1 };\n</script>\n<p>x</p>\n').hasScript).toBe(false);
@@ -68,9 +62,9 @@ describe("pages() plugin", () => {
     expect(plugin.hasClient("inexistente")).toBe(false);
   });
 
-  it("input() only includes JS entries via virtual ids", () => {
+  it("input() has a virtual entry per page (static ones for their CSS)", () => {
     const input = makePlugin().input();
-    expect(Object.keys(input)).toEqual(["admin"]);
+    expect(Object.keys(input)).toEqual(["admin", "home"]);
     expect(input.admin).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "admin");
   });
 
@@ -252,48 +246,41 @@ describe("pages() plugin", () => {
 
     it("input() adds the stylesheet as the `styles` entry", () => {
       const input = stylesPlugin("./src/app.css").input();
-      expect(Object.keys(input)).toEqual(["admin", "styles"]);
+      expect(Object.keys(input)).toEqual(["admin", "home", "styles"]);
       expect(input.styles).toBe(resolve(pkgRoot, "src/app.css"));
     });
 
     it("the virtual manifest hands the path to the shell", () => {
       expect(stylesPlugin("/src/app.css").load(MANIFEST_RESOLVED)).toContain('export const stylesEntry = "src/app.css";');
       expect(stylesPlugin().load(MANIFEST_RESOLVED)).toContain("export const stylesEntry = null;");
-      expect(Object.keys(stylesPlugin().input())).toEqual(["admin"]);
+      expect(Object.keys(stylesPlugin().input())).toEqual(["admin", "home"]);
     });
 
     it("false tells the shell to link no global stylesheet", () => {
       expect(stylesPlugin(false).load(MANIFEST_RESOLVED)).toContain("export const stylesEntry = false;");
-      expect(Object.keys(stylesPlugin(false).input())).toEqual(["admin"]);
+      expect(Object.keys(stylesPlugin(false).input())).toEqual(["admin", "home"]);
     });
   });
 
-  it("the CSS a layout imports becomes a CSS-only input for its static pages", () => {
-    const dir = mkdtempSync(join(tmpdir(), "hs-layout-css-"));
+  it("a static page's entry imports its layouts and itself, for their CSS, and runs nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-static-css-"));
     try {
-      for (const [file, source] of [
-        ["pages/home/layout.svelte", '<script>\n  import "../../app.css";\n  import "some-ui/style.css";\n  let { children } = $props();\n</script>\n{@render children()}\n'],
-        ["pages/home/index.svelte", "<h1>static</h1>\n"],
-        // Only client pages below: their own entry already carries the layout's CSS.
-        ["pages/dash/layout.svelte", '<script>\n  import "../../admin.css";\n  let { children } = $props();\n</script>\n{@render children()}\n'],
-        ["pages/dash/index.svelte", "<script>let n = 1;</script><p>{n}</p>\n"],
-        ["pages/plain/layout.svelte", "<script>let { children } = $props();</script>{@render children()}\n"],
-        ["pages/plain/index.svelte", "<p>no css</p>\n"],
-      ]) {
-        mkdirSync(dirname(join(dir, file)), { recursive: true });
-        writeFileSync(join(dir, file), source);
-      }
-      const plugin = pages({ pagesDir: join(dir, "pages") });
+      mkdirSync(join(dir, "home"), { recursive: true });
+      writeFileSync(join(dir, "home", "layout.svelte"), '<script>\n  import "../app.css";\n  let { children } = $props();\n</script>\n{@render children()}\n');
+      writeFileSync(join(dir, "home", "index.svelte"), "<h1>static</h1>\n");
+      const plugin = pages({ pagesDir: dir });
       plugin.configResolved({ root: dir } as never);
       plugin.buildStart();
-      const input = plugin.input();
-      expect(Object.keys(input).sort()).toEqual(["dash/index", "home/layout"]);
-      expect(input["home/layout"]).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "home/layout");
-      const code = plugin.load(String.fromCharCode(0) + ENTRY_PREFIX + "home/layout") as string;
-      const appCss = resolve(dir, "app.css").replace(/\\/g, "/");
-      expect(code).toContain(`import ${JSON.stringify(appCss)};\nimport "some-ui/style.css";\n`);
-      // Only stylesheets: no component, no runtime, nothing to run.
-      expect(code).not.toMatch(/\.svelte"|from "svelte/);
+      expect(plugin.input()["home/index"]).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "home/index");
+      const code = plugin.load(String.fromCharCode(0) + ENTRY_PREFIX + "home/index") as string;
+      // Layouts first, page last: the order their CSS applies in.
+      expect(code).toContain('import C0 from "/home/layout.svelte";\nimport C1 from "/home/index.svelte";\n');
+      expect(code).toContain('globalThis[Symbol.for("hono-svelte:css")] = [C0, C1];');
+      expect(code).not.toMatch(/from "svelte"|mount|document/);
+      // Still static for the shell: no client entry, a server loader.
+      const manifest = plugin.load(MANIFEST_RESOLVED) as string;
+      expect(manifest).toContain("export const clientEntries = [];");
+      expect(manifest).toMatch(/"home\/index": \(\) => import\(/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

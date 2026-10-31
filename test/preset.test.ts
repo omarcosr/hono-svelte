@@ -28,7 +28,7 @@ describe("honoSvelte() preset", () => {
       const build = cfg.build as { manifest?: boolean; outDir?: string; rollupOptions: { input: Record<string, string> } };
       expect(build.manifest).toBe(true);
       expect(build.outDir).toBe("dist");
-      expect(Object.keys(build.rollupOptions.input).sort()).toEqual(["app", "styles"]);
+      expect(Object.keys(build.rollupOptions.input).sort()).toEqual(["app", "index", "styles"]);
       expect(build.rollupOptions.input.styles).toBe(resolve(root, "src/styles.css"));
       const names = (cfg.plugins as { name?: string }[]).flat().map((p) => p?.name ?? "");
       expect(names).toContain("hono-svelte-pages");
@@ -44,7 +44,7 @@ describe("honoSvelte() preset", () => {
       const config = honoSvelte({ styles: false, dts: false, outDir: "./build/" });
       const cfg = await config({ command: "build", mode: "client", isSsrBuild: false, isPreview: false });
       const build = cfg.build as { outDir?: string; rollupOptions: { input: Record<string, string> } };
-      expect(Object.keys(build.rollupOptions.input)).toEqual(["app"]);
+      expect(Object.keys(build.rollupOptions.input)).toEqual(["app", "index"]);
       // The shell reads `false` as "no global stylesheet" (null keeps its src/styles.css default).
       expect((config.pages.load as (id: string) => string)(MANIFEST_RESOLVED)).toContain("export const stylesEntry = false;");
       expect(build.outDir).toBe("build");

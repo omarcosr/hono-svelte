@@ -9,13 +9,21 @@
   virtual manifest and no global sheet is linked; `shell({ stylesEntry:
   false })` does the same by hand. Leaving the option out keeps the
   `src/styles.css` default.
-- **fix(vite): static pages get the CSS their layouts import.** A static
-  page under a layout that does `import "../../app.css"` only received its
-  inlined component styles in production: the server build drops CSS
-  imports and the page has no client chunk. The client build now gets a
-  CSS-only entry per such layout (an empty `.js` that is never linked) and
-  the shell links its hashed CSS for the layout chain; in dev the shell
-  inlines the same stylesheets. Static pages still ship no JS.
+- **fix(vite): static pages get the CSS their layouts and components
+  import.** A static page under a layout that does `import "../../app.css"`
+  only received its inlined component styles: the server build drops CSS
+  imports and the page had no client chunk. Like SvelteKit's per-route
+  client nodes, every static page now gets a CSS-only entry in the client
+  build (its layouts and the page, followed through every import); the shell
+  links its hashed CSS and drops the inlined copies, and dev inlines the same
+  CSS. The entry's JS chunk is never linked: static pages still ship no JS.
+  Layouts of static pages are now compiled for the client too, so keep
+  server-only code out of them. Because more entries share code, interactive
+  pages may load the Svelte runtime and shared layouts as separate
+  (preloaded) chunks instead of one file.
+- **fix: dev no longer repeats component styles on server-rendered pages.**
+  Once the shell inlines the collected CSS, the copies Svelte injected into
+  the server render are dropped, as in production.
 
 ## 0.9.2
 

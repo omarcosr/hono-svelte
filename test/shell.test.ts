@@ -708,11 +708,10 @@ describe("CSS of hydrated pages", () => {
 
 describe("CSS of static pages", () => {
   const layout = async () => ({ default: (await import("./fixtures/_pages/nested-layout.svelte")).default });
-  // What the client build emits for the layouts' CSS-only entries; both reach app.css.
+  // What the client build emits for a static page's CSS-only entry: the layout lives in a shared chunk.
   const manifest = {
-    "\0virtual:hono-svelte/entry/home/layout": { file: "static/home/layout-1.js", isEntry: true, imports: ["_app"], css: ["static/home-2.css"] },
-    "\0virtual:hono-svelte/entry/home/blog/layout": { file: "static/home/blog/layout-3.js", isEntry: true, imports: ["_app"] },
-    _app: { file: "static/chunks/app-4.js", css: ["static/app-5.css"] },
+    "\0virtual:hono-svelte/entry/home/blog/post": { file: "static/home/blog/post-1.js", isEntry: true, imports: ["_layout"], css: ["static/post-2.css"] },
+    _layout: { file: "static/chunks/layout-3.js", css: ["static/layout-4.css"] },
   };
   const staticApp = (isProd: boolean) => {
     const app = new Hono();
@@ -732,15 +731,15 @@ describe("CSS of static pages", () => {
     return app;
   };
 
-  it("prod: links the CSS its layouts import, once each, and ships no JS", async () => {
+  it("prod: links its entry's CSS, layouts first, and ships no JS", async () => {
     const html = await (await staticApp(true).request("/")).text();
     const links = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
-    expect(links).toEqual(["/static/app-5.css", "/static/home-2.css"]);
+    expect(links).toEqual(["/static/layout-4.css", "/static/post-2.css"]);
     expect(html).not.toContain("<script");
     expect(html).not.toContain("modulepreload");
   });
 
-  it("dev: inlines what the plugin collected for its layouts", async () => {
+  it("dev: inlines what the plugin collected for it and its layouts", async () => {
     const collect = vi.fn(async () => [{ id: "/src/app.css", css: "body{color:red}" }]);
     const key = Symbol.for("hono-svelte.dev-css");
     (globalThis as Record<symbol, unknown>)[key] = collect;

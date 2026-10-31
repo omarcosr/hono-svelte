@@ -51,12 +51,16 @@ describe("dev CSS of a server-rendered page", () => {
     expect(at("theme.css")).toBeLessThan(at("counter.svelte"));
   });
 
-  it("a static page gets the `.css` its layouts import, and no component style twice", async () => {
+  it("never repeats a component style Svelte injected into the server render", () => {
+    expect(html.match(/seagreen/g)).toHaveLength(1);
+    expect(html).not.toMatch(/<style id="svelte-/);
+  });
+
+  it("a static page gets the same: its layouts' `.css` imports and component styles, once, and no JS", async () => {
     const about = await (await app.request("/about")).text();
     const head = about.split("</head>")[0];
     expect(head).toMatch(/<style data-vite-dev-id="[^"]+theme\.css">[^<]*rebeccapurple/);
-    // Svelte injects component styles into the server render already.
-    expect(head).not.toContain("type=style");
+    expect(head).toMatch(/<style data-vite-dev-id="[^"]+layout\.svelte\?svelte&amp;type=style&amp;lang\.css">[^<]*seagreen/);
     expect(head.match(/seagreen/g)).toHaveLength(1);
     expect(about).toContain("Static about page");
     expect(about).not.toContain("<script");

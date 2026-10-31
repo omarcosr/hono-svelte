@@ -552,8 +552,9 @@ export function shell(options: ShellOptions = {}) {
   const knownSet = known ? new Set(known) : undefined;
   const isSsrEntry = (entry: string): boolean => ssrPages[entry] !== undefined && !clientEntries.has(entry);
   const isHydratedEntry = (entry: string): boolean => ssrPages[entry] !== undefined && clientEntries.has(entry);
-  const layoutNames = memoByEntry((entry) => layoutChain(entry, Object.keys(ssrLayouts)));
-  const layoutLoaders = memoByEntry((entry) => layoutNames(entry).flatMap((name) => ssrLayouts[name] ?? []));
+  const layoutLoaders = memoByEntry((entry) =>
+    layoutChain(entry, Object.keys(ssrLayouts)).flatMap((name) => ssrLayouts[name] ?? []),
+  );
   // Prefetch targets: other entries that have a JS chunk.
   const prefetchTargets = memoByEntry((entry): PrefetchTarget[] =>
     (known ?? []).filter((e) => e !== entry && !isSsrEntry(e)).map((e) => ({ entry: e, url: prodUrl(e) })),
@@ -680,11 +681,14 @@ export function shell(options: ShellOptions = {}) {
         isSsr = false;
       }
     }
-    // A hydrated page rendered here: its markup must be styled before its script runs.
+    // Markup rendered here (a static page, or a hydrated one before its script
+    // runs) is styled by the entry's linked CSS (static pages have a CSS-only
+    // entry) — in dev, by the same CSS collected by the plugin and inlined —
+    // which makes Svelte's injected copies redundant.
     const hydrated = !isSsr && bodyHtml !== "" && isHydratedEntry(entryName);
-    if (hydrated && isProd && cssFor(entryName).length > 0) ssrHead = withoutComponentStyles(ssrHead);
-    // Static pages too: Svelte injects their component styles, not the `.css` their layouts import.
-    const devStyles = (hydrated || isSsr) && !isProd ? await devStyleTags(entryName, nAttr) : "";
+    const serverRendered = hydrated || isSsr;
+    const devStyles = serverRendered && !isProd ? await devStyleTags(entryName, nAttr) : "";
+    if (serverRendered && (isProd ? cssFor(entryName).length > 0 : devStyles !== "")) ssrHead = withoutComponentStyles(ssrHead);
     // Static pages ship no JS: layout data only feeds the server render, so
     // only the route's own `data` is embedded (layout data like a session
     // never lands in their HTML). Client-rendered pages need all of it.
@@ -699,9 +703,7 @@ export function shell(options: ShellOptions = {}) {
       ssrHead,
       pageHead,
     });
-    // A static page has no client chunk: its CSS is what its layouts import (CSS-only entries).
-    const pageCss = !isProd ? [] : isSsr ? layoutNames(entryName).flatMap(cssFor) : cssFor(entryName);
-    const stylesheets = new Set([...stylesHrefFor(isProd), ...pageCss, ...extraStyles]);
+    const stylesheets = [...stylesHrefFor(isProd), ...(isProd ? cssFor(entryName) : []), ...extraStyles];
 
     return c.html(
       `<!doctype html><html lang="${escapeAttr(lang)}"${htmlAttributes(c)}><head>${resolvedHead.title}` +

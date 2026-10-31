@@ -12,7 +12,6 @@ import {
 } from "./page-data.js";
 import {
   DEV_CSS_KEY,
-  entryResolvedId,
   ENTRY_PREFIX,
   ENTRY_RESOLVED_PREFIX,
   MANIFEST_ID,
@@ -116,8 +115,6 @@ export type LayoutSpec = {
   /** Extracted `Data` declaration (typed `layoutData` loader in the dts), if any. */
   dataType?: string;
   dataImports: DataImport[];
-  /** Stylesheets the layout's scripts import (relative ones made absolute). */
-  cssImports: string[];
 };
 
 const DEFAULT_IGNORE = ["**/_*.svelte"];
@@ -151,7 +148,6 @@ export function withInjectedCss(source: string): string {
  * layouts, which Vite otherwise injects only once the client JS loads (a
  * flash of unstyled markup). Walks the client module graph from those files
  * in import order; Vite's prebundled deps carry no app CSS and are skipped.
- * `files` may also hold resolved ids of virtual modules (`\0virtual:...`).
  */
 export async function collectDevCss(server: ViteDevServer, files: string[]): Promise<DevStylesheet[]> {
   const env = server.environments.client;
@@ -180,7 +176,7 @@ export async function collectDevCss(server: ViteDevServer, files: string[]): Pro
       if (dep.url && !dep.url.includes("/node_modules/.vite/")) await visit(dep.url);
     }
   };
-  for (const file of files) await visit(file.startsWith("\0") ? file : urlOf(file));
+  for (const file of files) await visit(urlOf(file));
   return sheets;
 }
 
@@ -190,14 +186,12 @@ function entryNameFromFile(file: string): string {
 
 type ScriptNode = { content: { start: number; end: number; body: unknown[] } } | null | undefined;
 
-const importSpecifiers = (body: unknown[]): string[] =>
+const relativeSpecifiers = (body: unknown[]): string[] =>
   body.flatMap((node) => {
     const n = node as { type?: string; source?: { value?: unknown } };
     const value = n.type === "ImportDeclaration" ? n.source?.value : undefined;
-    return typeof value === "string" ? [value] : [];
+    return typeof value === "string" && (value.startsWith("./") || value.startsWith("../")) ? [value] : [];
   });
-
-const isRelative = (specifier: string): boolean => specifier.startsWith("./") || specifier.startsWith("../");
 
 /**
  * What the plugin needs from a page source, read from the Svelte AST so a
@@ -206,26 +200,15 @@ const isRelative = (specifier: string): boolean => specifier.startsWith("./") ||
  * module script alone (`<script module>` / legacy `context="module"`, the
  * home of the per-page `Data` type) runs no per-component code.
  */
-export function analyzeSource(source: string): {
-  hasScript: boolean;
-  imports: string[];
-  cssImports: string[];
-  extracted: PageDataExtraction;
-} {
+export function analyzeSource(source: string): { hasScript: boolean; imports: string[]; extracted: PageDataExtraction } {
   const ast = parse(source, { modern: true }) as { instance?: ScriptNode; module?: ScriptNode };
   const instance = ast.instance;
   const module = ast.module;
-  const specifiers = [...importSpecifiers(module?.content.body ?? []), ...importSpecifiers(instance?.content.body ?? [])];
+  const imports = [...relativeSpecifiers(module?.content.body ?? []), ...relativeSpecifiers(instance?.content.body ?? [])];
   const extracted = module
     ? extractDataFromModuleScript(source.slice(module.content.start, module.content.end))
     : extractPageDataType(source);
-  return {
-    hasScript: Boolean(instance),
-    imports: specifiers.filter(isRelative),
-    // `?inline` / `?url` / `?raw` imports are strings, not stylesheets.
-    cssImports: specifiers.filter((s) => isCSSRequest(s) && !s.includes("?")),
-    extracted,
-  };
+  return { hasScript: Boolean(instance), imports, extracted };
 }
 
 /** Path key for comparing files (Windows paths are case-insensitive). */
@@ -255,8 +238,6 @@ type SourceInfo = {
   hasScript: boolean;
   /** Relative import specifiers (for the manual-layout-import guard). */
   imports: string[];
-  /** Stylesheet import specifiers (a layout's CSS for static pages). */
-  cssImports: string[];
   extracted: PageDataExtraction;
 };
 
@@ -437,15 +418,8 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       if (!filter(pagesDir + "/" + file)) continue;
       const entryName = entryNameFromFile(file);
       const absFile = resolve(pagesDir, file);
-      const { extracted, cssImports } = sourceInfo(absFile);
-      layouts.push({
-        entryName,
-        file,
-        absFile,
-        dataType: extracted.declaration ?? undefined,
-        dataImports: extracted.imports,
-        cssImports: cssImports.map((s) => (isRelative(s) ? normalizeSlashes(resolve(dirname(absFile), s)) : s)),
-      });
+      const { extracted } = sourceInfo(absFile);
+      layouts.push({ entryName, file, absFile, dataType: extracted.declaration ?? undefined, dataImports: extracted.imports });
     }
     return layouts.sort((a, b) => a.entryName.localeCompare(b.entryName));
   }
@@ -511,18 +485,9 @@ function chainFor(entryName: string, layouts: LayoutSpec[]): string[] {
     cachedInput = {};
     let jsCount = 0;
     for (const page of cachedPages) {
-      if (page.isStatic) continue;
+      // Static pages get an entry too, for their CSS only (see entrySource).
       cachedInput[page.entryName] = ENTRY_RESOLVED_PREFIX + page.entryName;
-      jsCount++;
-    }
-    // Static pages ship no JS, and the server build drops CSS imports: the
-    // stylesheets their layouts import get an input of their own (a CSS-only
-    // entry the shell links, whose empty JS chunk is never loaded).
-    const staticLayouts = new Set(cachedPages.filter((p) => p.isStatic).flatMap((p) => p.layouts));
-    for (const layout of cachedLayouts) {
-      if (staticLayouts.has(layout.entryName) && layout.cssImports.length > 0) {
-        cachedInput[layout.entryName] = ENTRY_RESOLVED_PREFIX + layout.entryName;
-      }
+      if (!page.isStatic) jsCount++;
     }
     if (log) {
       const staticCount = cachedPages.length - jsCount;
@@ -767,6 +732,19 @@ function layoutImportPath(layout: LayoutSpec): string {
   }
 
   function entrySource(page: PageSpec): string {
+    if (page.isStatic) {
+      // CSS-only entry, as SvelteKit builds a client node per route: the
+      // bundler collects the CSS of the layouts, the page and everything they
+      // import, and the shell links it. The JS chunk is never loaded. The
+      // assignment keeps the components in the bundle: Vite drops entry
+      // exports, and `"sideEffects": false` would drop bare imports.
+      const files = [...page.layouts.map((l) => layoutImportPath(layoutByName(l))), pageImportPath(page)];
+      return (
+        header + " CSS of " + page.file + "\n" +
+        files.map((f, i) => `import C${i} from ${JSON.stringify(f)};\n`).join("") +
+        'globalThis[Symbol.for("hono-svelte:css")] = [' + files.map((_, i) => "C" + i).join(", ") + "];\n"
+      );
+    }
     const ids = getIds(page.entryName);
     // Client entries mount the layout chain around the page (see
     // entryMountSource); hydrated pages hydrate it when the root holds the
@@ -878,11 +856,6 @@ function entryMountSource(page: PageSpec): string {
       if (id.startsWith(ENTRY_RESOLVED_PREFIX)) {
         const entryName = id.slice(ENTRY_RESOLVED_PREFIX.length);
         const page = listPages().find((p) => p.entryName === entryName);
-        const layout = page ? undefined : cachedLayouts.find((l) => l.entryName === entryName);
-        if (layout) {
-          (this as { addWatchFile?: (path: string) => void } | undefined)?.addWatchFile?.(layout.absFile);
-          return header + " CSS imported by " + layout.file + "\n" + layout.cssImports.map((s) => `import ${JSON.stringify(s)};\n`).join("");
-        }
         if (!page) {
           throw new Error("hono-svelte: no page found for entry: " + entryName);
         }
@@ -906,8 +879,6 @@ function entryMountSource(page: PageSpec): string {
       const collect: DevCssCollector = async (entryName) => {
         const page = listPages().find((p) => p.entryName === entryName);
         if (!page) return [];
-        // A static page's component styles are already in its SSR head; only its layouts' CSS imports are missing.
-        if (page.isStatic) return collectDevCss(server, page.layouts.map(entryResolvedId));
         const layoutFiles = page.layouts.flatMap((name) => cachedLayouts.find((l) => l.entryName === name)?.absFile ?? []);
         return collectDevCss(server, [...layoutFiles, page.absFile]);
       };

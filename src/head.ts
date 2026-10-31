@@ -59,8 +59,8 @@ export function renderHead(head: string | HeadProps | undefined): string {
 
 /**
  * Drops the `<style>` blocks Svelte's server render inlines for layouts and
- * shared components (compiled with `css: "injected"`). A hydrated page's
- * linked CSS already carries them: in production they only repeat it in every HTML.
+ * shared components (compiled with `css: "injected"`). A server-rendered
+ * page's linked CSS (or, in dev, the collected CSS) already carries them.
  */
 export function withoutComponentStyles(head: string): string {
   return head.replace(/<style id="svelte-[\w-]+"[^>]*>[\s\S]*?<\/style>/g, "");
