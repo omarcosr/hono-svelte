@@ -20,6 +20,10 @@
   gives the server build the client's asset names. Manual Vite configs set
   `build.rollupOptions.output.assetFileNames` on the server build the same
   way (see the README).
+- **docs: the server-only guard matches names only.** The README now warns
+  that server code imported by a page or layout under any other path than
+  `*.server.*` / `server/` (or a `pages({ serverOnly })` glob) is bundled into
+  a public `static/` file without an error.
 
 ## 0.10.0
 
