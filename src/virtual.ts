@@ -22,3 +22,12 @@ export function entryResolvedId(entryName: string): string {
 export function devEntryUrl(entryName: string): string {
   return "/@id/" + entryResolvedId(entryName).replace(NULL, "__x00__");
 }
+
+/** A stylesheet the dev server collected for a page: Vite's module id and its CSS. */
+export type DevStylesheet = { id: string; css: string };
+export type DevCssCollector = (entryName: string) => Promise<DevStylesheet[]>;
+
+// Dev only: the plugin's `configureServer` registers a collector here and the
+// shell (loaded by the same Vite process) calls it. The global works across
+// the plugin's and the SSR module runner's separate module instances.
+export const DEV_CSS_KEY = Symbol.for("hono-svelte.dev-css");

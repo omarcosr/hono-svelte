@@ -98,6 +98,8 @@ The rule is simple: **if the `.svelte` file has no `<script>`, the page ships as
 
 Server-rendered components (static pages and the layouts wrapping them) have no client bundle, so `pages()` compiles them for the server with `css: "injected"`: their `<style>` blocks arrive inline in the `<head>`. An explicit `<svelte:options css="...">` in the component wins.
 
+Hydrated pages (`pages({ hydrate })`) are styled before their script runs. In production the shell links the entry's CSS files (the page, its layouts and their components), so it drops the duplicate `<style>` blocks the server render inlines. In dev, Vite would only inject that CSS once the client JS loads, so the plugin collects the CSS of the page and its layouts (component `<style>` blocks and `.css` imports) and the shell inlines it as `<style data-vite-dev-id>`: Vite's client adopts those tags, so nothing is duplicated and hot updates keep working.
+
 Files starting with `_` and `layout.svelte` are ignored (convention for partials and layouts).
 
 ## Passing data to the page

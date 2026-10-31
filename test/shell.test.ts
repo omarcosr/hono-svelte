@@ -649,3 +649,61 @@ describe("shell", () => {
     }
   });
 });
+describe("CSS of hydrated pages", () => {
+  const hydratedApp = (isProd: boolean, nonce?: string) => {
+    const app = new Hono();
+    app.use("/*", shell({ ssrPages: Object.assign({ greet: propsLoader }, { __clientEntries: ["greet"] }) as never, isProd, nonce }));
+    app.get("/", (c) => c.render("greet", { name: "Ada" }));
+    return app;
+  };
+  const withCollector = async (collect: unknown, run: () => Promise<void>) => {
+    const key = Symbol.for("hono-svelte.dev-css");
+    (globalThis as Record<symbol, unknown>)[key] = collect;
+    try {
+      await run();
+    } finally {
+      delete (globalThis as Record<symbol, unknown>)[key];
+    }
+  };
+
+  it("dev: inlines what the plugin collected, tagged with Vite's ids and the nonce", async () => {
+    const collect = vi.fn(async () => [{ id: "/src/a.svelte?svelte&type=style&lang.css", css: "a{content:'</style>'}" }]);
+    await withCollector(collect, async () => {
+      const html = await (await hydratedApp(false, "n0nce").request("/")).text();
+      expect(collect).toHaveBeenCalledWith("greet");
+      const head = html.split("</head>")[0];
+      // `</style` inside the CSS is escaped, or it would close the tag early.
+      expect(head).toContain(String.raw`<style data-vite-dev-id="/src/a.svelte?svelte&amp;type=style&amp;lang.css" nonce="n0nce">a{content:'<\/style>'}</style>`);
+    });
+  });
+
+  it("dev: a failing collector leaves the page unstyled until its script runs, never broken", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withCollector(async () => Promise.reject(new Error("graph")), async () => {
+        const res = await hydratedApp(false).request("/");
+        expect(res.status).toBe(200);
+        expect(await res.text()).not.toContain("data-vite-dev-id");
+        expect(err).toHaveBeenCalled();
+      });
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it("prod: never asks the dev collector", async () => {
+    const collect = vi.fn(async () => []);
+    await withCollector(collect, async () => {
+      await (await hydratedApp(true).request("/")).text();
+      expect(collect).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("withoutComponentStyles", () => {
+  it("drops Svelte's injected component styles and keeps everything else", async () => {
+    const { withoutComponentStyles } = await import("../src/head.js");
+    const head = '<style id="svelte-u87z2q">.a{}</style><meta name="x" /><style id="svelte-9f1" nonce="n">.b{}</style><style>.own{}</style>';
+    expect(withoutComponentStyles(head)).toBe('<meta name="x" /><style>.own{}</style>');
+  });
+});

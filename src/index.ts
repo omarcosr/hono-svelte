@@ -8,7 +8,7 @@ import {
   type ViteManifest,
 } from "./assets.js";
 import { escapeAttr } from "./escape.js";
-import { renderHead, type HeadProps } from "./head.js";
+import { renderHead, withoutComponentStyles, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
@@ -19,7 +19,7 @@ import {
   ssrLayouts as autoSsrLayouts,
   ssrPages as autoSsrPages,
 } from "./ssr-manifest.js";
-import { devEntryUrl } from "./virtual.js";
+import { DEV_CSS_KEY, devEntryUrl, type DevCssCollector } from "./virtual.js";
 
 export {
   CACHE_IMMUTABLE,
@@ -409,6 +409,25 @@ function linkTags(rel: "stylesheet" | "modulepreload", hrefs: Iterable<string>, 
   return out;
 }
 
+/**
+ * Dev: a server-rendered page's CSS inline, collected by the plugin. Tagged
+ * with Vite's module ids, so Vite's client adopts (and hot-updates) these
+ * tags instead of injecting the same CSS again once the script runs.
+ */
+async function devStyleTags(entryName: string, nAttr: string): Promise<string> {
+  const collect = (globalThis as Record<symbol, unknown>)[DEV_CSS_KEY] as DevCssCollector | undefined;
+  if (typeof collect !== "function") return "";
+  try {
+    const sheets = await collect(entryName);
+    return sheets
+      .map((s) => `${LT}style data-vite-dev-id="${escapeAttr(s.id)}"${nAttr}>${s.css.replace(/<\/style/gi, "<\\/style")}${LT}/style>`)
+      .join("");
+  } catch (err) {
+    // Unstyled until the script runs, as before: never fail the render over dev CSS.
+    console.error(`[hono-svelte] could not collect dev CSS for "${entryName}":`, err);
+    return "";
+  }
+}
 type PrefetchTarget = { entry: string; url: string };
 
 function prefetchHoverScript(nonce: string | undefined, targets: PrefetchTarget[]): string {
@@ -660,6 +679,10 @@ export function shell(options: ShellOptions = {}) {
         isSsr = false;
       }
     }
+    // A hydrated page rendered here: its markup must be styled before its script runs.
+    const hydrated = !isSsr && bodyHtml !== "" && isHydratedEntry(entryName);
+    if (hydrated && isProd && cssFor(entryName).length > 0) ssrHead = withoutComponentStyles(ssrHead);
+    const devStyles = hydrated && !isProd ? await devStyleTags(entryName, nAttr) : "";
     // Static pages ship no JS: layout data only feeds the server render, so
     // only the route's own `data` is embedded (layout data like a session
     // never lands in their HTML). Client-rendered pages need all of it.
@@ -681,6 +704,7 @@ export function shell(options: ShellOptions = {}) {
         `<meta charset="utf-8" /><meta content="width=device-width, initial-scale=1" name="viewport" />` +
         resolvedHead.shellHead +
         linkTags("stylesheet", stylesheets, nAttr) +
+        devStyles +
         resolvedHead.ssrHead +
         pageHead +
         (isSsr ? "" : clientAssets(entryName, isProd, nonce)) +
