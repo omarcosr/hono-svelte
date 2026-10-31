@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.2
+
+- **fix(vite): hydrated pages are styled before their script runs.** In dev,
+  a `pages({ hydrate })` page painted its server markup before Vite injected
+  its component `<style>` blocks and its layouts' `.css` imports (a flash of
+  unstyled content and layout shift). The plugin now collects that CSS from
+  the client module graph and the shell inlines it as
+  `<style data-vite-dev-id>`, which Vite's client adopts and hot-updates. In
+  production, hydrated pages with linked CSS no longer repeat Svelte's
+  injected component styles inline in every HTML.
+
 ## 0.9.1
 
 - **fix(vite): Svelte libraries stay bundled in the server build.** With
