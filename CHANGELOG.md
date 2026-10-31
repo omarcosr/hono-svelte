@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 - **feat(vite): pages from several folders.** `pagesDir` (on `pages()` and
   `honoSvelte()`) also takes a list, e.g. `["src/pages",
