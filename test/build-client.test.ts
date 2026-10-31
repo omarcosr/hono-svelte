@@ -83,6 +83,18 @@ describe("vite build (client)", () => {
   it("the stylesEntry lands in the manifest under its source path", () => {
     expect(manifest["styles.css"]?.file).toMatch(/^static\/styles-[\w-]+\.css$/);
   });
+
+  it("a static page's layout gets a CSS-only entry with the stylesheets it imports", () => {
+    const cssOf = (entry: string) =>
+      manifestCssFor(manifest, entry).map((href) => readFileSync(join(outDir, href.slice(1)), "utf8")).join("");
+    // docs/intro is static (no JS) under docs/layout, which imports docs.css.
+    expect(manifestKeyFor(manifest, "docs/layout")).toBeDefined();
+    expect(cssOf("docs/layout")).toContain(".docs-theme");
+    // Component styles stay out: Svelte already injects them into the server render.
+    expect(cssOf("docs/layout")).not.toContain(".docs-nav");
+    // The interactive page under the same layout still gets the stylesheet.
+    expect(cssOf("docs/counter")).toContain(".docs-theme");
+  });
 });
 
 // `@hono/vite-build` puts its `external` list on the top-level build, which the

@@ -161,10 +161,10 @@ export type ShellOptions = {
    * same file passed to the client build input. Dev links `/<stylesEntry>`
    * (served by Vite); prod resolves the hashed file from the manifest given
    * in `assets`, falling back to `/static/styles.css`. `stylesHref` wins
-   * when set.
+   * when set. `false` links no global stylesheet (pages import their own).
    * @default `pages({ stylesEntry })` when set, else "src/styles.css"
    */
-  stylesEntry?: string;
+  stylesEntry?: string | false;
   /** Global head HTML (fonts, meta) — page `head` prop is appended after it. */
   head?: string;
   /**
@@ -524,7 +524,7 @@ export function shell(options: ShellOptions = {}) {
   const strict = options.strict ?? true;
   const ssrFallback = options.ssrFallback ?? false;
   const extraStyles = options.styles ?? [];
-  const stylesEntry = (options.stylesEntry ?? autoStylesEntry ?? "src/styles.css").replace(/^\/+/, "");
+  const stylesEntry = options.stylesEntry ?? autoStylesEntry ?? "src/styles.css";
 
   // The manifest never changes for a shell instance: resolve once, cache per entry.
   const manifest = manifestFor(assetsOpt);
@@ -552,9 +552,8 @@ export function shell(options: ShellOptions = {}) {
   const knownSet = known ? new Set(known) : undefined;
   const isSsrEntry = (entry: string): boolean => ssrPages[entry] !== undefined && !clientEntries.has(entry);
   const isHydratedEntry = (entry: string): boolean => ssrPages[entry] !== undefined && clientEntries.has(entry);
-  const layoutLoaders = memoByEntry((entry) =>
-    layoutChain(entry, Object.keys(ssrLayouts)).flatMap((name) => ssrLayouts[name] ?? []),
-  );
+  const layoutNames = memoByEntry((entry) => layoutChain(entry, Object.keys(ssrLayouts)));
+  const layoutLoaders = memoByEntry((entry) => layoutNames(entry).flatMap((name) => ssrLayouts[name] ?? []));
   // Prefetch targets: other entries that have a JS chunk.
   const prefetchTargets = memoByEntry((entry): PrefetchTarget[] =>
     (known ?? []).filter((e) => e !== entry && !isSsrEntry(e)).map((e) => ({ entry: e, url: prodUrl(e) })),
@@ -603,12 +602,14 @@ export function shell(options: ShellOptions = {}) {
     return attrs ? renderAttributes(attrs) : "";
   };
 
-  function stylesHrefFor(isProd: boolean): string {
+  function stylesHrefFor(isProd: boolean): string[] {
     const custom = typeof options.stylesHref === "function" ? options.stylesHref(isProd) : options.stylesHref;
-    if (custom !== undefined) return custom;
-    if (!isProd) return "/" + stylesEntry;
-    const file = manifest?.[stylesEntry]?.file;
-    return file ? "/" + file.replace(/^\/+/, "") : `${assetsBase}/styles.css`;
+    if (custom !== undefined) return [custom];
+    if (stylesEntry === false) return [];
+    const source = stylesEntry.replace(/^\/+/, "");
+    if (!isProd) return ["/" + source];
+    const file = manifest?.[source]?.file;
+    return [file ? "/" + file.replace(/^\/+/, "") : `${assetsBase}/styles.css`];
   }
 
   function resolveNonce(c: unknown): string | undefined {
@@ -682,7 +683,8 @@ export function shell(options: ShellOptions = {}) {
     // A hydrated page rendered here: its markup must be styled before its script runs.
     const hydrated = !isSsr && bodyHtml !== "" && isHydratedEntry(entryName);
     if (hydrated && isProd && cssFor(entryName).length > 0) ssrHead = withoutComponentStyles(ssrHead);
-    const devStyles = hydrated && !isProd ? await devStyleTags(entryName, nAttr) : "";
+    // Static pages too: Svelte injects their component styles, not the `.css` their layouts import.
+    const devStyles = (hydrated || isSsr) && !isProd ? await devStyleTags(entryName, nAttr) : "";
     // Static pages ship no JS: layout data only feeds the server render, so
     // only the route's own `data` is embedded (layout data like a session
     // never lands in their HTML). Client-rendered pages need all of it.
@@ -697,7 +699,9 @@ export function shell(options: ShellOptions = {}) {
       ssrHead,
       pageHead,
     });
-    const stylesheets = [stylesHrefFor(isProd), ...(isProd ? cssFor(entryName) : []), ...extraStyles];
+    // A static page has no client chunk: its CSS is what its layouts import (CSS-only entries).
+    const pageCss = !isProd ? [] : isSsr ? layoutNames(entryName).flatMap(cssFor) : cssFor(entryName);
+    const stylesheets = new Set([...stylesHrefFor(isProd), ...pageCss, ...extraStyles]);
 
     return c.html(
       `<!doctype html><html lang="${escapeAttr(lang)}"${htmlAttributes(c)}><head>${resolvedHead.title}` +

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MANIFEST_RESOLVED } from "../src/virtual.js";
 import { detectRuntime, honoSvelte } from "../src/vite.js";
 
 describe("honoSvelte() preset", () => {
@@ -38,12 +39,14 @@ describe("honoSvelte() preset", () => {
     });
   });
 
-  it("styles: false drops the stylesheet input; dts can be turned off", async () => {
+  it("styles: false drops the stylesheet input and its link; dts can be turned off", async () => {
     await inApp(async () => {
       const config = honoSvelte({ styles: false, dts: false, outDir: "./build/" });
       const cfg = await config({ command: "build", mode: "client", isSsrBuild: false, isPreview: false });
       const build = cfg.build as { outDir?: string; rollupOptions: { input: Record<string, string> } };
       expect(Object.keys(build.rollupOptions.input)).toEqual(["app"]);
+      // The shell reads `false` as "no global stylesheet" (null keeps its src/styles.css default).
+      expect((config.pages.load as (id: string) => string)(MANIFEST_RESOLVED)).toContain("export const stylesEntry = false;");
       expect(build.outDir).toBe("build");
       expect(config.pages.dtsPath()).toBeNull();
       for (const staticFiles of [false, { precompressed: false }] as const) {

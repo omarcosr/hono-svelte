@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **fix: `styles: false` links no global stylesheet.** With
+  `honoSvelte({ styles: false })` (or `pages({ stylesEntry: false })`) the
+  shell still linked `/src/styles.css` in dev and `/static/styles.css` in
+  production, a 404 on every page. `false` now reaches the shell through the
+  virtual manifest and no global sheet is linked; `shell({ stylesEntry:
+  false })` does the same by hand. Leaving the option out keeps the
+  `src/styles.css` default.
+- **fix(vite): static pages get the CSS their layouts import.** A static
+  page under a layout that does `import "../../app.css"` only received its
+  inlined component styles in production: the server build drops CSS
+  imports and the page has no client chunk. The client build now gets a
+  CSS-only entry per such layout (an empty `.js` that is never linked) and
+  the shell links its hashed CSS for the layout chain; in dev the shell
+  inlines the same stylesheets. Static pages still ship no JS.
+
 ## 0.9.2
 
 - **fix(vite): hydrated pages are styled before their script runs.** In dev,

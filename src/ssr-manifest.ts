@@ -20,4 +20,4 @@ export const staticEntries: string[] = [];
 
 export const clientManifest: ViteManifest | null = null;
 
-export const stylesEntry: string | null = null;
+export const stylesEntry: string | false | null = null;

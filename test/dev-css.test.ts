@@ -11,6 +11,7 @@ import { DEV_CSS_KEY } from "../src/virtual.js";
 
 const fixture = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/dev-app");
 let server: ViteDevServer;
+let app: { request: (p: string) => Promise<Response> };
 let html: string;
 
 beforeAll(async () => {
@@ -22,7 +23,7 @@ beforeAll(async () => {
     server: { middlewareMode: true, ws: false },
     plugins: [svelte(), pages({ pagesDir: join(fixture, "pages"), hydrate: true })],
   });
-  const app = (await server.ssrLoadModule(join(fixture, "server.ts"))).default as { request: (p: string) => Promise<Response> };
+  app = (await server.ssrLoadModule(join(fixture, "server.ts"))).default as typeof app;
   html = await (await app.request("/")).text();
 }, 60_000);
 
@@ -48,6 +49,17 @@ describe("dev CSS of a server-rendered page", () => {
     expect(at("theme.css")).toBeGreaterThanOrEqual(0);
     expect(at("layout.svelte")).toBeLessThan(at("counter.svelte"));
     expect(at("theme.css")).toBeLessThan(at("counter.svelte"));
+  });
+
+  it("a static page gets the `.css` its layouts import, and no component style twice", async () => {
+    const about = await (await app.request("/about")).text();
+    const head = about.split("</head>")[0];
+    expect(head).toMatch(/<style data-vite-dev-id="[^"]+theme\.css">[^<]*rebeccapurple/);
+    // Svelte injects component styles into the server render already.
+    expect(head).not.toContain("type=style");
+    expect(head.match(/seagreen/g)).toHaveLength(1);
+    expect(about).toContain("Static about page");
+    expect(about).not.toContain("<script");
   });
 
   it("uses Vite's own module ids, so the client adopts the tags instead of duplicating them", async () => {

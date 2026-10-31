@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { getPage } from "../../../../../src/page.js";
+  import "./docs.css";
 
   let { children }: { children: Snippet } = $props();
   const page = getPage();
