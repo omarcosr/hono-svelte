@@ -11,13 +11,16 @@ import {
   type PageDataExtraction,
 } from "./page-data.js";
 import {
+  DEV_CSS_KEY,
   ENTRY_PREFIX,
   ENTRY_RESOLVED_PREFIX,
   MANIFEST_ID,
   MANIFEST_RESOLVED,
+  type DevCssCollector,
+  type DevStylesheet,
 } from "./virtual.js";
 import { parse } from "svelte/compiler";
-import { createFilter, type Plugin, type ViteDevServer } from "vite";
+import { createFilter, isCSSRequest, type Plugin, type ViteDevServer } from "vite";
 
 export { detectRuntime, honoSvelte } from "./preset.js";
 export type { HonoSvelteConfig, HonoSvelteOptions, HonoSvelteRuntime } from "./preset.js";
@@ -136,6 +139,44 @@ export function withInjectedCss(source: string): string {
     `<svelte:options${options[1]} css="injected"${options[2]}>` +
     source.slice(options.index + options[0].length)
   );
+}
+
+/**
+ * Dev only: the CSS a server-rendered page needs before its script runs —
+ * component `<style>` blocks and plain `.css` imports of the page and its
+ * layouts, which Vite otherwise injects only once the client JS loads (a
+ * flash of unstyled markup). Walks the client module graph from those files
+ * in import order; Vite's prebundled deps carry no app CSS and are skipped.
+ */
+export async function collectDevCss(server: ViteDevServer, files: string[]): Promise<DevStylesheet[]> {
+  const env = server.environments.client;
+  const root = server.config.root;
+  const urlOf = (file: string): string => {
+    const rel = normalizeSlashes(relative(root, file));
+    return rel.startsWith("..") || isAbsolute(rel) ? "/@fs/" + normalizeSlashes(file).replace(/^\/+/, "") : "/" + rel;
+  };
+  // `?direct` (first in the query, as Vite's own link handling does) returns the CSS text, not a JS module.
+  const directUrl = (url: string): string => (url.includes("?") ? url.replace("?", "?direct&") : url + "?direct");
+  const seen = new Set<string>();
+  const sheets: DevStylesheet[] = [];
+  const visit = async (url: string): Promise<void> => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    if (isCSSRequest(url)) {
+      const result = await env.transformRequest(directUrl(url));
+      const mod = await env.moduleGraph.getModuleByUrl(url);
+      // The id is what Vite's client keys its <style> tags by: it adopts these instead of adding duplicates.
+      if (result && mod?.id) sheets.push({ id: mod.id, css: result.code });
+      return;
+    }
+    await env.transformRequest(url);
+    const mod = await env.moduleGraph.getModuleByUrl(url);
+    for (const dep of mod?.importedModules ?? []) {
+      if (dep.url && !dep.url.includes("/node_modules/.vite/")) await visit(dep.url);
+    }
+  };
+  for (const file of files) await visit(urlOf(file));
+  return sheets;
 }
 
 function entryNameFromFile(file: string): string {
@@ -816,6 +857,14 @@ function entryMountSource(page: PageSpec): string {
     },
     configureServer(server: ViteDevServer) {
       server.watcher.add(pagesDir);
+      // The shell inlines this CSS into server-rendered pages (see `collectDevCss`).
+      const collect: DevCssCollector = async (entryName) => {
+        const page = listPages().find((p) => p.entryName === entryName);
+        if (!page) return [];
+        const layoutFiles = page.layouts.flatMap((name) => cachedLayouts.find((l) => l.entryName === name)?.absFile ?? []);
+        return collectDevCss(server, [...layoutFiles, page.absFile]);
+      };
+      (globalThis as Record<symbol, unknown>)[DEV_CSS_KEY] = collect;
       const isPagePath = (file: string): boolean => {
         const rel = normalizeSlashes(relative(pagesDir, file));
         return rel.length > 0 && !rel.startsWith("..") && rel.endsWith(".svelte");
