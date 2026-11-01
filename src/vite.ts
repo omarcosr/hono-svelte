@@ -262,16 +262,43 @@ const CLIENT_DIRECTIVES: Record<string, string> = {
 const COMPONENT_NODES = new Set(["Component", "SvelteComponent", "SvelteSelf"]);
 const FUNCTION_NODES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
 
-type Expr = { type?: string; expression?: { type: string } };
+type Expr = { type?: string; expression?: unknown };
+type Node = { type?: string; name?: string; object?: Node; left?: Node; argument?: Node; value?: Node };
 
 /**
  * An `on*` attribute with code in it. On an element every `on*` is an event; on a
  * component it is any prop (`online`, `only`), so only an inline function counts.
  * A plain string (`onclick="go()"`) is HTML the browser runs by itself.
+ * A handler that only passes a prop on (`<button {onclick}>`) is the caller's, warned about there.
  */
-function isHandler(value: unknown, onComponent: boolean): boolean {
-  if (onComponent) return (value as Expr).type === "ExpressionTag" && FUNCTION_NODES.has((value as Expr).expression?.type ?? "");
-  return Array.isArray(value) ? value.some((v) => (v as Expr).type === "ExpressionTag") : (value as Expr).type === "ExpressionTag";
+function isHandler(value: unknown, onComponent: boolean, fromProps: (expression: unknown) => boolean): boolean {
+  if (Array.isArray(value)) return !onComponent && value.some((v) => (v as Expr).type === "ExpressionTag");
+  const tag = value as Expr;
+  if (tag.type !== "ExpressionTag") return false;
+  return onComponent ? FUNCTION_NODES.has((tag.expression as Node)?.type ?? "") : !fromProps(tag.expression);
+}
+
+/** Is `expression` one of the component's props (`let { onclick } = $props()`, or `props.onclick`)? */
+function propsMatcher(body: unknown[]): (expression: unknown) => boolean {
+  const names = new Set<string>();
+  const objects = new Set<string>();
+  for (const node of body) {
+    const n = node as { type?: string; declarations?: { id: Node & { properties?: Node[] }; init?: { type?: string; callee?: Node } }[] };
+    if (n.type !== "VariableDeclaration") continue;
+    for (const { id, init } of n.declarations ?? []) {
+      if (init?.type !== "CallExpression" || init.callee?.name !== "$props") continue;
+      if (id.type === "Identifier") objects.add(id.name as string);
+      for (const p of id.properties ?? []) {
+        if (p.type === "RestElement") objects.add(p.argument?.name as string);
+        else names.add((p.value?.type === "AssignmentPattern" ? p.value.left?.name : p.value?.name) as string);
+      }
+    }
+  }
+  return (expression) => {
+    const e = expression as Node | undefined;
+    if (e?.type === "Identifier") return names.has(e.name as string);
+    return e?.type === "MemberExpression" && e.object?.type === "Identifier" && objects.has(e.object.name as string);
+  };
 }
 
 /** Local names the instance script imports from `from` (`isFrom`), optionally only the export `name`. */
@@ -293,6 +320,7 @@ function clientOnlyCode(source: string, fragment: unknown, instance: ScriptNode)
   const body = instance?.content.body ?? [];
   const islands = importedNames(body, isIslandFile);
   const onMount = importedNames(body, (s) => s === "svelte", "onMount");
+  const fromProps = propsMatcher(body);
   const found: ClientOnly[] = [];
   const add = (what: string, start: number): void => {
     found.push({ what, line: source.slice(0, start).split("\n").length });
@@ -301,12 +329,16 @@ function clientOnlyCode(source: string, fragment: unknown, instance: ScriptNode)
   const visit = (node: unknown, parent: string): void => {
     if (Array.isArray(node)) return node.forEach((child) => visit(child, parent));
     if (!node || typeof node !== "object") return;
-    const n = node as { type?: string; name?: string; start: number; value?: unknown; callee?: { type: string; name?: string; object?: { name?: string }; property?: { name?: string } } };
+    const n = node as { type?: string; name?: string; start: number; value?: unknown; expression?: unknown; callee?: { type: string; name?: string; object?: { name?: string }; property?: { name?: string } } };
     if (n.type === "Component" && islands.has(n.name as string)) return;
     const directive = CLIENT_DIRECTIVES[n.type as string];
-    if (directive && !(n.type === "BindDirective" && n.name === "this")) add(directive + n.name, n.start);
+    // A `bind:` to a prop passes it on, like a handler prop (see isHandler).
+    if (directive && !(n.type === "BindDirective" && (n.name === "this" || fromProps(n.expression)))) add(directive + n.name, n.start);
     else if (n.type === "AttachTag") add("{@attach}", n.start);
-    else if (n.type === "Attribute" && /^on/i.test(n.name as string) && isHandler(n.value, COMPONENT_NODES.has(parent))) add(n.name as string, n.start);
+    // `<svelte:boundary onerror>` handles rendering errors, not a browser event.
+    else if (n.type === "Attribute" && parent !== "SvelteBoundary" && /^on/i.test(n.name as string) && isHandler(n.value, COMPONENT_NODES.has(parent), fromProps)) {
+      add(n.name as string, n.start);
+    }
     else if (n.type === "CallExpression" && n.callee) {
       const { callee } = n;
       if (callee.type === "Identifier" && onMount.has(callee.name as string)) add("onMount()", n.start);
@@ -320,9 +352,13 @@ function clientOnlyCode(source: string, fragment: unknown, instance: ScriptNode)
   return found;
 }
 
-/** Relative `.svelte` imports of the instance script that are not islands: the components it renders. */
+/** `.svelte` imports of the instance script that are not islands, by any specifier: the components it renders. */
 const svelteComponents = (body: unknown[]): string[] =>
-  relativeSpecifiers(body).filter((s) => s.endsWith(".svelte") && !isIslandFile(s));
+  body.flatMap((node) => {
+    const n = node as { type?: string; source?: { value?: unknown } };
+    const value = n.type === "ImportDeclaration" ? n.source?.value : undefined;
+    return typeof value === "string" && value.endsWith(".svelte") && !isIslandFile(value) ? [value] : [];
+  });
 
 /**
  * What the plugin needs from a page source, read from the Svelte AST so a
@@ -388,7 +424,7 @@ type SourceInfo = {
   islands: boolean;
   /** Browser-only code outside islands (warned about in static pages). */
   clientOnly: ClientOnly[];
-  /** Relative non-island `.svelte` imports, followed by that warning. */
+  /** Non-island `.svelte` imports, followed by that warning. */
   components: string[];
   extracted: PageDataExtraction;
 };
@@ -662,24 +698,41 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       const hydrate = !isStatic && hydrated(entryName);
       result.push({ entryName, dir, file, absFile, isStatic, hydrate, layouts, dataType, dataImports: info.extracted.imports });
     }
-    warnStaticInteractivity(result);
     return result;
   }
 
   let lastStaticWarning = "";
+  let staticWarningRun = 0;
 
   /**
    * A static page ships no bundle of its own: handlers, `onMount()` and the like in
    * it, its layouts or the components they import never run in the browser. Svelte
-   * compiles them without complaint, so say it once per change (dev re-scans on save).
-   * shortcut: follows relative imports only (`$lib/…` aliases are not resolved).
+   * compiles them without complaint, so say it once per change (dev re-checks on save).
+   * Imports go through Vite's resolver (`resolveId`), so aliases and tsconfig paths are
+   * followed; components from packages are not walked.
    */
-  function warnStaticInteractivity(pages: PageSpec[]): void {
+  async function warnStaticInteractivity(resolveId: (specifier: string, importer: string) => Promise<string | null | undefined>): Promise<void> {
+    const run = ++staticWarningRun;
     const layoutFile = new Map(cachedLayouts.map((l) => [l.dir + "\0" + l.entryName, l.absFile]));
+    const resolved = new Map<string, Promise<string | null>>();
+    const componentFile = (spec: string, importer: string): Promise<string | null> => {
+      const key = importer + "\0" + spec;
+      if (!resolved.has(key)) {
+        const file = resolveId(spec, importer).then(
+          (id) => {
+            const f = id?.split("?")[0];
+            return f && f.endsWith(".svelte") && !f.startsWith("\0") && !f.split(/[/\\]/).includes("node_modules") ? f : null;
+          },
+          () => null,
+        );
+        resolved.set(key, file);
+      }
+      return resolved.get(key) as Promise<string | null>;
+    };
     const where = new Map<string, string[]>();
-    for (const page of pages.filter((p) => p.isStatic)) {
+    for (const page of listPages().filter((p) => p.isStatic)) {
       const seen = new Set<string>();
-      const visit = (file: string): void => {
+      const visit = async (file: string): Promise<void> => {
         if (seen.has(pathKey(file))) return;
         seen.add(pathKey(file));
         let info: SourceInfo;
@@ -692,11 +745,15 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
           const key = `${what} (${rootRelative(file)}:${line})`;
           where.set(key, [...(where.get(key) ?? []), page.entryName]);
         }
-        for (const spec of info.components) visit(resolve(dirname(file), spec));
+        for (const spec of info.components) {
+          const target = await componentFile(spec, file);
+          if (target) await visit(target);
+        }
       };
-      visit(page.absFile);
-      for (const layout of page.layouts) visit(layoutFile.get(page.dir + "\0" + layout) as string);
+      await visit(page.absFile);
+      for (const layout of page.layouts) await visit(layoutFile.get(page.dir + "\0" + layout) as string);
     }
+    if (run !== staticWarningRun) return; // a newer check (dev save) owns the warning
     const lines = [...where].map(([code, entries]) => `  ${code} in ${entries.map((e) => JSON.stringify(e)).join(", ")}`);
     const message = lines.join("\n");
     if (message === lastStaticWarning) return;
@@ -1126,9 +1183,14 @@ function entryMountSource(page: PageSpec): string {
     configResolved(config) {
       viteRoot = config.root;
     },
+    // Not async: a broken page scan throws right here, before any build work.
     buildStart() {
       refresh();
       writeDtsFile();
+      return warnStaticInteractivity(async (spec, importer) => {
+        const r = await this.resolve(spec, importer);
+        return r && !r.external ? r.id : null;
+      });
     },
     async resolveId(source, importer) {
       // Virtual manifest: explicit (virtual:hono-svelte/manifest, backwards compat)
@@ -1261,15 +1323,27 @@ function entryMountSource(page: PageSpec): string {
           server.ws.send({ type: "full-reload" });
         }
       };
+      // Any component can change what a static page renders, not only the files of the pages folder.
+      const recheck = (file: string): void => {
+        if (!file.endsWith(".svelte")) return;
+        const resolveId = async (spec: string, importer: string) => {
+          const r = await server.environments.client.pluginContainer.resolveId(spec, importer);
+          return r && !r.external ? r.id : null;
+        };
+        warnStaticInteractivity(resolveId).catch(() => {}); // a page that does not parse is reported by the scan and the svelte plugin
+      };
       server.watcher.on("add", (file) => {
         if (isPagePath(file)) onMaybeStructural();
+        recheck(file);
       });
       server.watcher.on("unlink", (file) => {
         sourceCache.delete(file);
         if (isPagePath(file)) onMaybeStructural();
+        recheck(file);
       });
       server.watcher.on("change", (file) => {
         if (isPagePath(file)) onMaybeStructural();
+        recheck(file);
       });
     },
     input() {
