@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **feat: islands.** A component named `*.island.svelte` is an island. A
+  page that imports one is rendered on the server and ships no page bundle;
+  each island gets its own bundle, which hydrates every copy of it on the
+  page with the props the server rendered (JSON in a `<hono-island>`
+  element; in dev the island warns about function props JSON drops).
+  Islands in layouts work too. Interactive pages (`hydrate`,
+  `alwaysClient`, or a script without islands) ship their whole bundle as
+  before, and the island inside them is a plain component. No configuration,
+  in the preset or the manual Vite config.
 - **feat: `privatePages` files are no longer public.** Their bundles were
   plain static files: anyone could load the admin's JS and CSS (screens,
   API calls) without signing in. With `privatePages: ["admin"]` the static

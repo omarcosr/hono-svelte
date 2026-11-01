@@ -68,11 +68,11 @@ describe("pages() plugin", () => {
     expect(input.admin).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "admin");
   });
 
-  it("resolveId maps the shell relative import and the manifest", () => {
+  it("resolveId maps the shell relative import and the manifest", async () => {
     const plugin = makePlugin();
-    expect(plugin.resolveId("./ssr-manifest.js")).toBe(MANIFEST_RESOLVED);
-    expect(plugin.resolveId(MANIFEST_ID)).toBe(MANIFEST_RESOLVED);
-    expect(plugin.resolveId(ENTRY_PREFIX + "admin")).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "admin");
+    expect(await plugin.resolveId("./ssr-manifest.js")).toBe(MANIFEST_RESOLVED);
+    expect(await plugin.resolveId(MANIFEST_ID)).toBe(MANIFEST_RESOLVED);
+    expect(await plugin.resolveId(ENTRY_PREFIX + "admin")).toBe(String.fromCharCode(0) + ENTRY_PREFIX + "admin");
   });
 
   it("virtual manifest lists entries and static loaders", () => {

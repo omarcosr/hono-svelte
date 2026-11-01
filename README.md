@@ -149,6 +149,38 @@ honoSvelte({ hydrate: ["dashboard/index", "auth"] }); // or some of them
 - Nothing changes in the markup contract: same root, same `<script type="application/json">` props block, the same `<div style="display:contents">` layout wrappers, `nonce` on every shell tag, and no new inline scripts.
 - The page's own CSS comes from its client bundle (linked in `<head>` in production). In `vite` dev it arrives with the module, so a hydrated page can flash unstyled in dev only.
 
+## Islands
+
+A mostly static page with a few interactive parts doesn't have to ship the whole page as JS. Name those parts `*.island.svelte`:
+
+```svelte
+<!-- src/components/Cart.island.svelte -->
+<script>
+  let { count = 0 } = $props();
+  let n = $state(count);
+</script>
+
+<button onclick={() => n++}>{n} in cart</button>
+```
+
+```svelte
+<!-- src/pages/product.svelte -->
+<script>
+  import Cart from "../components/Cart.island.svelte";
+  let { name } = $props();
+</script>
+
+<h1>{name}</h1>          <!-- HTML only -->
+<Cart count={2} />       <!-- only this ships JS -->
+```
+
+- A page that imports an island is rendered on the server, like a page without `<script>`: no page bundle. Each island gets its own bundle, linked only by the pages that render it, and it hydrates every copy of the island on the page. Islands work in layouts too.
+- Only the page's own imports count: a page that imports `Header.svelte`, which imports an island, ships its whole bundle. Import the island in the page itself, or put it in a layout.
+- Props travel as JSON in the markup (`<hono-island data-props>`): strings, numbers, booleans, arrays and plain objects. Functions, snippets and `children` don't reach the browser (in `vite` dev the island warns in the console when it gets one). Anything you pass is public.
+- The page's own script runs on the server only. Its `$state` doesn't react in the browser; put the interactivity in an island.
+- An interactive page (an instance `<script>` that imports no island, or a page in `hydrate` / `alwaysClient`) ships its whole bundle as before. An island inside it is a regular component.
+- Islands hydrate when their bundle loads; there are no `visible` or `idle` strategies yet. No configuration: the plugin finds islands by the name and builds their bundles (the manual Vite config too).
+
 ## Status, headers and per-page head
 
 `c.render(entry, data)` only carries the page data. Status and headers are Hono's own `c.status()` / `c.header()`; the document `<head>` is `c.setHead()`, set before rendering:

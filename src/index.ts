@@ -21,7 +21,12 @@ import {
   ssrLayouts as autoSsrLayouts,
   ssrPages as autoSsrPages,
 } from "./ssr-manifest.js";
-import { DEV_CSS_KEY, devEntryUrl, type DevCssCollector } from "./virtual.js";
+import { DEV_CSS_KEY, devEntryUrl, ISLAND_TAG, type DevCssCollector } from "./virtual.js";
+
+const ISLAND_RE = new RegExp(`<${ISLAND_TAG} data-island="([^"]+)"`, "g");
+
+/** The islands a server-rendered page contains (each named by its bundle's entry). */
+const islandsIn = (html: string): string[] => [...new Set(Array.from(html.matchAll(ISLAND_RE), (m) => m[1] as string))];
 
 export {
   CACHE_IMMUTABLE,
@@ -684,6 +689,18 @@ export function shell(options: ShellOptions = {}) {
     return out + `${LT}script type="module" src="${escapeAttr(src)}"${nAttr}>${LT}/script>`;
   }
 
+  /** Module scripts (and preloads) of the islands in a server-rendered page. */
+  function islandAssets(islands: string[], isProd: boolean, nonce: string | undefined): string {
+    if (islands.length === 0) return "";
+    const nAttr = nonceAttr(nonce);
+    const srcs = islands.map((name) => (isProd ? prodUrl(name) : devEntryUrl(name)));
+    let out = "";
+    if (options.preload ?? isProd) {
+      out += linkTags("modulepreload", new Set([...srcs, ...(isProd ? islands.flatMap(importsFor) : [])]), nAttr);
+    }
+    return out + srcs.map((src) => `${LT}script type="module" src="${escapeAttr(src)}"${nAttr}>${LT}/script>`).join("");
+  }
+
   /** Shell default headers the route did not set itself (`c.header()` wins). */
   function unsetDefaultHeaders(c: any): Record<string, string> {
     const set = (c as { res: Response }).res.headers;
@@ -757,7 +774,7 @@ export function shell(options: ShellOptions = {}) {
         devStyles +
         resolvedHead.ssrHead +
         pageHead +
-        (isSsr ? "" : clientAssets(entryName, isProd, nonce)) +
+        (isSsr ? islandAssets(islandsIn(bodyHtml), isProd, nonce) : clientAssets(entryName, isProd, nonce)) +
         `</head>` +
         `<body><div id="${ids.rootId}" ${PAGE_ATTRIBUTES.path}="${escapeAttr(page.path)}" ${PAGE_ATTRIBUTES.route}="${escapeAttr(page.route)}">${bodyHtml}</div>` +
         dataHtml +

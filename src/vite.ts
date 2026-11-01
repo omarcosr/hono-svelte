@@ -1,5 +1,5 @@
 import { existsSync, globSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { manifestKeyFor, privateAssetDirs, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
@@ -17,10 +17,12 @@ import {
   ENTRY_RESOLVED_PREFIX,
   MANIFEST_ID,
   MANIFEST_RESOLVED,
+  ISLAND_ENTRY_PREFIX,
+  ISLAND_TAG,
   type DevCssCollector,
   type DevStylesheet,
 } from "./virtual.js";
-import { parse } from "svelte/compiler";
+import { compile, parse } from "svelte/compiler";
 import { createFilter, isCSSRequest, searchForWorkspaceRoot, type Plugin, type ViteDevServer } from "vite";
 
 export { detectRuntime, honoSvelte } from "./preset.js";
@@ -233,6 +235,19 @@ const relativeSpecifiers = (body: unknown[]): string[] =>
     return typeof value === "string" && (value.startsWith("./") || value.startsWith("../")) ? [value] : [];
   });
 
+const ISLAND_SUFFIX = ".island.svelte";
+// Module id of the wrapper pages render in place of an island (see islandWrapperSource).
+// Not `.svelte.js`: the svelte plugin compiles those as rune modules.
+const ISLAND_WRAPPER = "__island.js";
+// Bare imports only: the component's own `?svelte&type=style` CSS request is not an island.
+const isIslandFile = (specifier: string): boolean => specifier.endsWith(ISLAND_SUFFIX);
+
+const importsIsland = (body: unknown[]): boolean =>
+  body.some((node) => {
+    const n = node as { type?: string; source?: { value?: unknown } };
+    return n.type === "ImportDeclaration" && typeof n.source?.value === "string" && isIslandFile(n.source.value);
+  });
+
 /**
  * What the plugin needs from a page source, read from the Svelte AST so a
  * `<script>` inside an HTML comment or an `import` inside a string cannot
@@ -240,7 +255,12 @@ const relativeSpecifiers = (body: unknown[]): string[] =>
  * module script alone (`<script module>` / legacy `context="module"`, the
  * home of the per-page `Data` type) runs no per-component code.
  */
-export function analyzeSource(source: string): { hasScript: boolean; imports: string[]; extracted: PageDataExtraction } {
+export function analyzeSource(source: string): {
+  hasScript: boolean;
+  imports: string[];
+  islands: boolean;
+  extracted: PageDataExtraction;
+} {
   const ast = parse(source, { modern: true }) as { instance?: ScriptNode; module?: ScriptNode };
   const instance = ast.instance;
   const module = ast.module;
@@ -248,7 +268,7 @@ export function analyzeSource(source: string): { hasScript: boolean; imports: st
   const extracted = module
     ? extractDataFromModuleScript(source.slice(module.content.start, module.content.end))
     : extractPageDataType(source);
-  return { hasScript: Boolean(instance), imports, extracted };
+  return { hasScript: Boolean(instance), imports, islands: importsIsland(instance?.content.body ?? []), extracted };
 }
 
 /** Path key for comparing files (Windows paths are case-insensitive). */
@@ -278,6 +298,8 @@ type SourceInfo = {
   hasScript: boolean;
   /** Relative import specifiers (for the manual-layout-import guard). */
   imports: string[];
+  /** The instance script imports a `*.island.svelte` component. */
+  islands: boolean;
   extracted: PageDataExtraction;
 };
 
@@ -541,7 +563,8 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
       // The shell SSRs the page and wraps it in the layout chain; the layout
       // files themselves are compiled into the page's client entry only when
       // the page needs JS. Layout-wrapped static pages ship zero JS.
-      const isStatic = !hasScript && !alwaysClient.has(entryName);
+      // A page that imports an island is server-rendered the same way: only its islands ship JS.
+      const isStatic = (!hasScript || (info.islands && !hydrated(entryName))) && !alwaysClient.has(entryName);
       // Per-page typed data: `export type Data` / `interface Data` in a
       // <script module> feeds a typed overload in the generated dts. Types it
       // imports are carried along as `import("…")` queries (see dataDeclaration).
@@ -873,6 +896,64 @@ function entryMountSource(page: PageSpec): string {
     return lines.join("\n");
   }
 
+  /** Entry name of an island's client bundle: its root-relative path, `..` spelled `__` (entry names have no `..`). */
+  function islandName(absFile: string): string {
+    const rel = normalizeSlashes(relative(viteRoot ?? process.cwd(), absFile)).slice(0, -ISLAND_SUFFIX.length);
+    return ISLAND_ENTRY_PREFIX + rel.split("/").map((s) => (s === ".." ? "__" : s)).join("/");
+  }
+
+  function islandFile(name: string): string {
+    const rel = name.slice(ISLAND_ENTRY_PREFIX.length).split("/").map((s) => (s === "__" ? ".." : s)).join("/");
+    return resolve(viteRoot ?? process.cwd(), rel + ISLAND_SUFFIX);
+  }
+
+  /**
+   * What a page renders in place of an island, on the server and in client
+   * pages alike (so a hydrated page still matches): the island inside an
+   * element that names its bundle and carries its props as JSON. The
+   * boundary renders the `<!--[-->…<!--]-->` pair `hydrate()` starts from,
+   * so the island's bundle hydrates it on its own.
+   */
+  function islandWrapperSource(absFile: string, dev: boolean): string {
+    return (
+      "<script>\n" +
+      `  import Island from ${JSON.stringify(rootImportPath(absFile))};\n` +
+      "  const props = $props();\n" +
+      // Dev: the props the JSON drops (callbacks, snippets, children), for the island's bundle to warn about.
+      (dev ? '  const dropped = Object.keys(props).filter((k) => typeof props[k] === "function").join(", ") || undefined;\n' : "") +
+      "</script>\n" +
+      `<${ISLAND_TAG} data-island={${JSON.stringify(islandName(absFile))}} data-props={JSON.stringify(props)}` +
+      (dev ? " data-dropped={dropped}" : "") +
+      ` style="display:contents">` +
+      `<svelte:boundary><Island {...props} /></svelte:boundary></${ISLAND_TAG}>\n`
+    );
+  }
+
+  /** An island's client bundle: hydrates every copy of it on the page. */
+  function islandEntrySource(name: string): string {
+    const file = islandFile(name);
+    const selector = `${ISLAND_TAG}[data-island=${JSON.stringify(name)}]`;
+    return (
+      header + " Island: " + normalizeSlashes(file) + "\n" +
+      'import { hydrate } from "svelte";\n' +
+      "import Island from " + JSON.stringify(rootImportPath(file)) + ";\n" +
+      'const root = document.querySelector("[data-hs-path]");\n' +
+      // Same context the shell gives server-rendered components (see src/page.ts).
+      "const context = new Map([[Symbol.for(\"hono-svelte:page\"), {" +
+      " path: root?.getAttribute(\"data-hs-path\") ?? location.pathname," +
+      " route: root?.getAttribute(\"data-hs-route\") ?? location.pathname }]]);\n" +
+      "for (const target of document.querySelectorAll(" + JSON.stringify(selector) + ")) {\n" +
+      (viteCommand !== "build"
+        ? '  const dropped = target.getAttribute("data-dropped");\n' +
+          "  if (dropped) console.warn(" +
+          JSON.stringify(`[hono-svelte] island ${name}: props travel as JSON, so these function props are not in the browser: `) +
+          " + dropped);\n"
+        : "") +
+      '  hydrate(Island, { target, props: JSON.parse(target.getAttribute("data-props") || "{}"), context });\n' +
+      "}\n"
+    );
+  }
+
 
   const plugin: PagesPlugin = {
     name: "hono-svelte-pages",
@@ -915,7 +996,7 @@ function entryMountSource(page: PageSpec): string {
       refresh();
       writeDtsFile();
     },
-    resolveId(source, importer) {
+    async resolveId(source, importer) {
       // Virtual manifest: explicit (virtual:hono-svelte/manifest, backwards compat)
       // or the shell's own relative import. Without pages() active, the
       // relative import resolves the static dist/ssr-manifest.js stub.
@@ -927,11 +1008,42 @@ function entryMountSource(page: PageSpec): string {
       if (source === MANIFEST_RESOLVED || source.startsWith(ENTRY_RESOLVED_PREFIX)) {
         return source;
       }
-      void importer;
+      // An island import gets the wrapper, except from the wrapper itself and the island's own bundle.
+      // The dev client asks for the wrapper by URL: it resolves back to the same id.
+      const wrapperUrl = source.endsWith(ISLAND_WRAPPER);
+      if (
+        (wrapperUrl || isIslandFile(source)) &&
+        !importer?.endsWith(ISLAND_WRAPPER) &&
+        !importer?.startsWith(ENTRY_RESOLVED_PREFIX + ISLAND_ENTRY_PREFIX)
+      ) {
+        const real = await this.resolve(wrapperUrl ? source.slice(0, -ISLAND_WRAPPER.length) : source, importer, { skipSelf: true });
+        return real && !real.external ? real.id + ISLAND_WRAPPER : null;
+      }
       return null;
     },
     load(id, options) {
       if (id === MANIFEST_RESOLVED) return manifestSource();
+      if (id.endsWith(ISLAND_WRAPPER)) {
+        const file = id.slice(0, -ISLAND_WRAPPER.length);
+        const consumer = (this as { environment?: { config?: { consumer?: string } } }).environment?.config?.consumer;
+        const ssr = options?.ssr === true || consumer === "server";
+        // Client build: the island gets its own bundle the moment a page reaches it.
+        if (viteCommand === "build" && !ssr) {
+          this.emitFile({ type: "chunk", id: ENTRY_RESOLVED_PREFIX + islandName(file), name: "island-" + basename(file, ISLAND_SUFFIX) });
+        }
+        // Compiled here, not by the svelte plugin: its HMR mode puts an anchor after the island
+        // that the island's bundle, hydrating the island alone, would not expect.
+        const { js } = compile(islandWrapperSource(file, viteCommand !== "build"), {
+          filename: file + ISLAND_WRAPPER,
+          generate: ssr ? "server" : "client",
+          dev: viteCommand !== "build",
+          runes: true,
+        });
+        return { code: js.code, map: js.map };
+      }
+      if (id.startsWith(ENTRY_RESOLVED_PREFIX + ISLAND_ENTRY_PREFIX)) {
+        return islandEntrySource(id.slice(ENTRY_RESOLVED_PREFIX.length));
+      }
       if (id.startsWith(ENTRY_RESOLVED_PREFIX)) {
         const entryName = id.slice(ENTRY_RESOLVED_PREFIX.length);
         const page = listPages().find((p) => p.entryName === entryName);
