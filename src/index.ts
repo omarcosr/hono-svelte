@@ -12,7 +12,7 @@ import { renderHead, withoutComponentStyles, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
-import { PREFETCH_ASSET, prefetchHoverCode } from "./prefetch.js";
+import { PREFETCH_ASSET, prefetchable, prefetchHoverCode, privateDirOf, privatePrefetchAsset } from "./prefetch.js";
 import {
   allEntries as autoAllEntries,
   clientManifest as autoClientManifest,
@@ -496,6 +496,8 @@ type ManifestMeta = {
   __allEntries?: string[];
   /** Layout chain per entry, set when pages come from several folders (a layout wraps only its own folder). */
   __layoutChains?: Record<string, string[]>;
+  /** `pages({ privatePages })`: folders whose pages only their own pages prefetch. */
+  __privatePages?: string[];
 };
 const metaOf = (pages: Record<string, SsrPageLoader>): ManifestMeta => pages as ManifestMeta;
 
@@ -553,12 +555,19 @@ export function shell(options: ShellOptions = {}) {
   const layoutLoaders = memoByEntry((entry) =>
     chainOf(entry, Object.keys(ssrLayouts)).flatMap((name) => ssrLayouts[name] ?? []),
   );
-  // Prefetch targets: other entries that have a JS chunk.
+  const privateDirs = metaOf(ssrPages).__privatePages ?? metaOf(autoSsrPages).__privatePages ?? [];
+  // Prefetch targets: other entries that have a JS chunk, minus private folders the page is not in.
   const prefetchTargets = memoByEntry((entry): PrefetchTarget[] =>
-    (known ?? []).filter((e) => e !== entry && !isSsrEntry(e)).map((e) => ({ entry: e, url: prodUrl(e) })),
+    (known ?? [])
+      .filter((e) => e !== entry && !isSsrEntry(e) && prefetchable(e, entry, privateDirs))
+      .map((e) => ({ entry: e, url: prodUrl(e) })),
   );
-  // The hover script the client build emitted (cached like any hashed file); a custom resolver keeps the inline map.
-  const prefetchFile = typeof assetsOpt === "function" ? undefined : manifest?.[PREFETCH_ASSET]?.file;
+  // The hover script the client build emitted for the page's folder (cached like any hashed file); a custom resolver keeps the inline map.
+  const prefetchFile = memoByEntry((entry) => {
+    if (typeof assetsOpt === "function") return undefined;
+    const dir = privateDirOf(entry, privateDirs);
+    return manifest?.[dir ? privatePrefetchAsset(dir) : PREFETCH_ASSET]?.file;
+  });
 
   // Internally untyped: the generated dts narrows the keys for the app, the shell indexes by name.
   const layoutDataLoaders: Record<string, LayoutDataLoader> = (options.layoutData ?? {}) as Record<string, LayoutDataLoader>;
@@ -635,8 +644,9 @@ export function shell(options: ShellOptions = {}) {
     if (isProd && options.prefetch === "all") {
       out += linkTags("modulepreload", prefetchTargets(entryName).map((t) => t.url), nAttr);
     } else if (isProd && options.prefetch === "hover") {
-      out += prefetchFile
-        ? `${LT}script type="module" src="${escapeAttr("/" + prefetchFile.replace(/^\/+/, ""))}"${nAttr}>${LT}/script>`
+      const file = prefetchFile(entryName);
+      out += file
+        ? `${LT}script type="module" src="${escapeAttr("/" + file.replace(/^\/+/, ""))}"${nAttr}>${LT}/script>`
         : prefetchHoverScript(nonce, prefetchTargets(entryName));
     }
     return out + `${LT}script type="module" src="${escapeAttr(src)}"${nAttr}>${LT}/script>`;

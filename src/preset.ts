@@ -72,7 +72,7 @@ export type HonoSvelteConfig = ((env: ConfigEnv) => Promise<UserConfig>) & {
 /** Client asset names; the server build uses the same so both builds agree on every asset URL. */
 const ASSET_FILE_NAMES = "static/[name]-[hash][extname]";
 
-const PAGES_KEYS: (keyof PagesOptions)[] = ["pagesDir", "ignore", "alwaysClient", "generatedHeader", "layouts", "dts", "clientManifest", "hydrate", "serverOnly"];
+const PAGES_KEYS: (keyof PagesOptions)[] = ["pagesDir", "ignore", "alwaysClient", "generatedHeader", "layouts", "dts", "clientManifest", "hydrate", "serverOnly", "privatePages"];
 
 function isModuleNotFound(err: unknown): boolean {
   const code = (err as { code?: string }).code;

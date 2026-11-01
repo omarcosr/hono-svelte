@@ -22,6 +22,14 @@
   dropped from 2.9 to 1.9 KB (login) and from 5.0 to 4.1 KB (home) in
   brotli. A custom `assets` resolver, or a manifest without the file, keeps
   the inline script.
+- **feat(vite): `privatePages` keeps private folders out of prefetch.**
+  The prefetch map listed every page, so public HTML (and now the public
+  map file) named the admin's pages and their bundles to any visitor.
+  `pages({ privatePages: ["admin"] })` (also on `honoSvelte()`) leaves those
+  folders out of the public map, the inline map and `prefetch: "all"`; the
+  build emits one map per private folder (`hono-svelte/prefetch/<dir>.js`)
+  that only the folder's own pages load. The bundles stay public files:
+  data still has to be protected on the server.
 
 ## 0.11.0
 
