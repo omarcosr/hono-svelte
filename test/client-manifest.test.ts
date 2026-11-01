@@ -8,6 +8,8 @@ vi.mock("../src/ssr-manifest.js", async (importOriginal) => ({
   clientManifest: {
     "src/app.css": { file: "static/styles-abc.css" },
     "virtual:hono-svelte/entry/admin": { file: "static/admin-123.js", isEntry: true, css: ["static/admin-9.css"] },
+    "virtual:hono-svelte/entry/users": { file: "static/users-456.js", isEntry: true },
+    "hono-svelte/prefetch.js": { file: "static/prefetch-777.js" },
   },
 }));
 
@@ -48,5 +50,17 @@ describe("embedded client manifest", () => {
   it("an explicit assets option still wins", async () => {
     const html = await render({ assets: (entry) => `/cdn/${entry}.js` });
     expect(html).toContain('src="/cdn/admin.js"');
+  });
+
+  it("prefetch: hover links the hover script the client build emitted, not an inline map", async () => {
+    const html = await render({ prefetch: "hover", knownEntries: ["admin", "users"], nonce: "n1" });
+    expect(html).toContain('<script type="module" src="/static/prefetch-777.js" nonce="n1"></script>');
+    expect(html).not.toContain("var m=");
+  });
+
+  it("prefetch: hover keeps the inline map when a custom resolver names the files", async () => {
+    const html = await render({ prefetch: "hover", knownEntries: ["admin", "users"], assets: (entry) => `/cdn/${entry}.js` });
+    expect(html).toContain('var m={"users":"/cdn/users.js"}');
+    expect(html).not.toContain("prefetch-777");
   });
 });

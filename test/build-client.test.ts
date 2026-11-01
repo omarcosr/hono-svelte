@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, type Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createManifestAssets, manifestCssFor, manifestKeyFor, type ViteManifest } from "../src/assets.js";
+import { PREFETCH_ASSET } from "../src/prefetch.js";
 import { clientBundlesDeps, precompress } from "../src/preset.js";
 import { pages } from "../src/vite.js";
 
@@ -82,6 +83,14 @@ describe("vite build (client)", () => {
 
   it("the stylesEntry lands in the manifest under its source path", () => {
     expect(manifest["styles.css"]?.file).toMatch(/^static\/styles-[\w-]+\.css$/);
+  });
+
+  it("emits the hover-prefetch map of the client entries as a hashed file in the manifest", () => {
+    const file = manifest[PREFETCH_ASSET]?.file;
+    expect(file).toMatch(/^static\/prefetch-[\w-]+\.js$/);
+    const code = readFileSync(join(outDir, file as string), "utf8");
+    expect(code).toContain(`"docs/counter":"${createManifestAssets(manifest)("docs/counter")}"`);
+    expect(code).not.toContain('"docs":'); // static page: no JS to preload
   });
 
 });
