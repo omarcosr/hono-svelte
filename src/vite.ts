@@ -1,6 +1,6 @@
 import { existsSync, globSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { manifestKeyFor, type ViteManifest } from "./assets.js";
+import { manifestKeyFor, privateAssetDirs, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { PREFETCH_ASSET, prefetchHoverCode, privateDirOf, privatePrefetchAsset } from "./prefetch.js";
@@ -102,7 +102,10 @@ export type PagesOptions = {
    * names their pages from outside the folder: the public hover map, the
    * inline map and `prefetch: "all"` leave them out, so public HTML does not
    * list the admin's pages and bundles. Pages inside a folder still prefetch
-   * its pages. Their files stay public: guard the data on the server.
+   * its pages. In production the static layer of `honoSvelte()` leaves the
+   * files only these folders use to the app, which serves them after its own
+   * check with `privateAssets()` (otherwise they 404). Still guard the data
+   * on the server: the files hold code, not data.
    * @default []
    */
   privatePages?: string[];
@@ -127,6 +130,8 @@ export type PagesPlugin = Plugin & {
   dataTypes: () => Record<string, string>;
   /** Layout chain for an entry, outermost first (or [] for none). */
   layoutChain: (entryName: string) => string[];
+  /** URL paths of the client files only `privatePages` folders use (read from the client manifest; `[]` before it exists). */
+  privateFiles: () => string[];
   /**
    * Fail fast when the surrounding Vite config looks wrong
    * (missing svelte plugin, missing pages plugin in a client build).
@@ -441,11 +446,17 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
     return info;
   }
 
-  /** Client manifest JSON to embed, or `null` (dev, disabled, or not built yet). */
-  function clientManifestJson(): string | null {
+  /** The client build's manifest file, or `null` (dev, disabled, or not built yet). */
+  function clientManifestFile(): string | null {
     if (viteCommand !== "build" || options.clientManifest === false) return null;
     const file = resolve(viteRoot ?? process.cwd(), options.clientManifest ?? "dist/.vite/manifest.json");
-    if (!existsSync(file)) return null;
+    return existsSync(file) ? file : null;
+  }
+
+  /** Client manifest JSON to embed, or `null` (dev, disabled, or not built yet). */
+  function clientManifestJson(): string | null {
+    const file = clientManifestFile();
+    if (!file) return null;
     let manifest: ViteManifest;
     try {
       manifest = JSON.parse(readFileSync(file, "utf8")) as ViteManifest;
@@ -1036,6 +1047,10 @@ function entryMountSource(page: PageSpec): string {
     layouts() {
       listPages();
       return cachedLayouts.map((l) => l.entryName);
+    },
+    privateFiles() {
+      const file = privateDirs.length > 0 ? clientManifestFile() : null;
+      return file ? [...privateAssetDirs(JSON.parse(readFileSync(file, "utf8")) as ViteManifest, privateDirs).keys()] : [];
     },
     layoutChain(entryName: string) {
       const page = listPages().find((p) => p.entryName === entryName);

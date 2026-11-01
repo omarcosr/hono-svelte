@@ -81,6 +81,15 @@ describe("staticFiles()", () => {
     expect((await app({ sourcemaps: true }).request("/static/app-abc.js.map")).status).toBe(200);
   });
 
+  it("privateFiles fall through to the app; hashedCacheControl replaces the immutable header", async () => {
+    const res = await app({ privateFiles: ["/static/app-abc.js"] }).request("/static/app-abc.js");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("app");
+    const own = await app({ hashedCacheControl: "private, max-age=31536000, immutable" }).request("/static/app-abc.js");
+    expect(own.status).toBe(200);
+    expect(own.headers.get("Cache-Control")).toBe("private, max-age=31536000, immutable");
+  });
+
   it("a missing file reaches the app without static headers", async () => {
     const res = await app().request("/missing.txt");
     expect(res.status).toBe(404);
@@ -97,5 +106,13 @@ describe("staticFilesHook()", () => {
     expect(bun).toContain('const hsStaticFiles = staticFiles(serveStatic, {"root":"./dist","sourcemaps":false})');
     expect(bun).toContain('mainApp.use("/static/*", hsStaticFiles)\nmainApp.use("/favicon.svg", hsStaticFiles)');
     expect(staticFilesHook("node", {})("app")).toContain("from '@hono/node-server/serve-static'");
+  });
+
+  it("adds the private files known when the entry is generated", () => {
+    let files: string[] = [];
+    const hook = staticFilesHook("bun", { root: "./dist" }, () => files);
+    expect(hook("app")).toContain('staticFiles(serveStatic, {"root":"./dist"})');
+    files = ["/static/admin/index-a.js"];
+    expect(hook("app")).toContain('staticFiles(serveStatic, {"root":"./dist","privateFiles":["/static/admin/index-a.js"]})');
   });
 });
