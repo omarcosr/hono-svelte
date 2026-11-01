@@ -66,7 +66,7 @@ describe("islands: discovery", () => {
         "  $effect.pre(() => {});",
         "</script>",
         '<svelte:window onkeydown={f} /><button onclick={() => n++} bind:this={el} bind:value={v} use:tip transition:fade {@attach a}>+</button>',
-        '<C onpick={g} /><a onclick="go()">plain</a><Nav />',
+        '<C onpick={g} /><a onclick="go()">plain</a><Nav online={true} only={x} onselect={() => {}} />',
       ].join("\n"),
     );
     expect(clientOnly).toEqual([
@@ -76,10 +76,18 @@ describe("islands: discovery", () => {
       { what: "use:tip", line: 8 },
       { what: "transition:fade", line: 8 },
       { what: "{@attach}", line: 8 },
+      { what: "onselect", line: 9 },
       { what: "onMount()", line: 5 },
       { what: "$effect()", line: 6 },
     ]);
     expect(components).toEqual(["./Nav.svelte"]);
+  });
+
+  it("analyzeSource goes by what onMount and $effect are, not by the name", () => {
+    const code = (script: string) => analyzeSource(`<script>${script}</script>`).clientOnly.map((c) => c.what);
+    expect(code('import { onMount as mounted } from "svelte"; mounted(() => {});')).toEqual(["onMount()"]);
+    expect(code("function onMount(f) { f(); } onMount(() => {});")).toEqual([]);
+    expect(code("const inside = $effect.tracking(); $effect.root(() => {});")).toEqual(["$effect()"]);
   });
 
   it("warns about browser-only code in static pages, their layouts and the components they import", () => {

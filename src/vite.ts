@@ -259,43 +259,64 @@ const CLIENT_DIRECTIVES: Record<string, string> = {
   AnimateDirective: "animate:",
 };
 
-const isTextValue = (value: unknown): boolean => Array.isArray(value) && value.every((v) => (v as { type?: string }).type === "Text");
+const COMPONENT_NODES = new Set(["Component", "SvelteComponent", "SvelteSelf"]);
+const FUNCTION_NODES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
+
+type Expr = { type?: string; expression?: { type: string } };
+
+/**
+ * An `on*` attribute with code in it. On an element every `on*` is an event; on a
+ * component it is any prop (`online`, `only`), so only an inline function counts.
+ * A plain string (`onclick="go()"`) is HTML the browser runs by itself.
+ */
+function isHandler(value: unknown, onComponent: boolean): boolean {
+  if (onComponent) return (value as Expr).type === "ExpressionTag" && FUNCTION_NODES.has((value as Expr).expression?.type ?? "");
+  return Array.isArray(value) ? value.some((v) => (v as Expr).type === "ExpressionTag") : (value as Expr).type === "ExpressionTag";
+}
+
+/** Local names the instance script imports from `from` (`isFrom`), optionally only the export `name`. */
+const importedNames = (body: unknown[], isFrom: (source: string) => boolean, name?: string): Set<string> =>
+  new Set(
+    body.flatMap((node) => {
+      const n = node as { type?: string; source?: { value?: unknown }; specifiers?: { local: { name: string }; imported?: { name?: string } }[] };
+      if (n.type !== "ImportDeclaration" || typeof n.source?.value !== "string" || !isFrom(n.source.value)) return [];
+      return (n.specifiers ?? []).filter((s) => !name || s.imported?.name === name).map((s) => s.local.name);
+    }),
+  );
 
 /**
  * Code in a component that only runs in the browser: event handlers, `bind:`,
  * actions, transitions, `{@attach}`, `onMount()` and `$effect()`. Island
- * elements are skipped (they hydrate); a string `onclick="…"` is plain HTML.
+ * elements are skipped (they hydrate).
  */
 function clientOnlyCode(source: string, fragment: unknown, instance: ScriptNode): ClientOnly[] {
-  const islands = new Set(
-    (instance?.content.body ?? []).flatMap((node) => {
-      const n = node as { type?: string; source?: { value?: unknown }; specifiers?: { local: { name: string } }[] };
-      return n.type === "ImportDeclaration" && typeof n.source?.value === "string" && isIslandFile(n.source.value)
-        ? (n.specifiers ?? []).map((s) => s.local.name)
-        : [];
-    }),
-  );
+  const body = instance?.content.body ?? [];
+  const islands = importedNames(body, isIslandFile);
+  const onMount = importedNames(body, (s) => s === "svelte", "onMount");
   const found: ClientOnly[] = [];
   const add = (what: string, start: number): void => {
     found.push({ what, line: source.slice(0, start).split("\n").length });
   };
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) return node.forEach(visit);
+  // `parent` is the type of the closest node above: for an attribute, the element or component it is on.
+  const visit = (node: unknown, parent: string): void => {
+    if (Array.isArray(node)) return node.forEach((child) => visit(child, parent));
     if (!node || typeof node !== "object") return;
-    const n = node as { type?: string; name?: string; start: number; value?: unknown; callee?: { type: string; name?: string; object?: { name?: string } } };
+    const n = node as { type?: string; name?: string; start: number; value?: unknown; callee?: { type: string; name?: string; object?: { name?: string }; property?: { name?: string } } };
     if (n.type === "Component" && islands.has(n.name as string)) return;
     const directive = CLIENT_DIRECTIVES[n.type as string];
     if (directive && !(n.type === "BindDirective" && n.name === "this")) add(directive + n.name, n.start);
     else if (n.type === "AttachTag") add("{@attach}", n.start);
-    else if (n.type === "Attribute" && /^on/i.test(n.name as string) && n.value !== true && !isTextValue(n.value)) add(n.name as string, n.start);
-    else if (n.type === "CallExpression") {
-      const callee = n.callee?.type === "MemberExpression" ? n.callee.object?.name : n.callee?.name;
-      if (callee === "onMount" || callee === "$effect") add(callee + "()", n.start);
+    else if (n.type === "Attribute" && /^on/i.test(n.name as string) && isHandler(n.value, COMPONENT_NODES.has(parent))) add(n.name as string, n.start);
+    else if (n.type === "CallExpression" && n.callee) {
+      const { callee } = n;
+      if (callee.type === "Identifier" && onMount.has(callee.name as string)) add("onMount()", n.start);
+      const effect = callee.type === "Identifier" ? callee.name === "$effect" : callee.object?.name === "$effect" && (callee.property?.name === "pre" || callee.property?.name === "root");
+      if (effect) add("$effect()", n.start);
     }
-    for (const [key, value] of Object.entries(node)) if (key !== "loc" && key !== "name_loc") visit(value);
+    for (const [key, value] of Object.entries(node)) if (key !== "loc" && key !== "name_loc") visit(value, n.type ?? parent);
   };
-  visit(fragment);
-  visit(instance?.content.body);
+  visit(fragment, "Fragment");
+  visit(body, "Program");
   return found;
 }
 
