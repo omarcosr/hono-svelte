@@ -1,11 +1,12 @@
 // Islands end to end: `honoSvelte()` builds test/fixtures/island-app (client
 // and server). A page that imports a `*.island.svelte` component is rendered
 // on the server and ships only the island's bundle, which hydrates each copy.
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createBuilder } from "vite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createManifestAssets, type ViteManifest } from "../src/assets.js";
 import { analyzeSource, honoSvelte, pages } from "../src/vite.js";
 
@@ -52,6 +53,62 @@ describe("islands: discovery", () => {
     expect(analyzeSource('<script>import C from "./C.island.svelte";</script><C />').islands).toBe(true);
     expect(analyzeSource('<script>import C from "$lib/C.island.svelte";</script><C />').islands).toBe(true);
     expect(analyzeSource('<script>import C from "./C.svelte";</script><C />').islands).toBe(false);
+  });
+
+  it("analyzeSource lists browser-only code outside islands, with its line", () => {
+    const { clientOnly, components } = analyzeSource(
+      [
+        "<script>",
+        '  import { onMount } from "svelte";',
+        '  import Nav from "./Nav.svelte";',
+        '  import C from "./C.island.svelte";',
+        "  onMount(() => {});",
+        "  $effect.pre(() => {});",
+        "</script>",
+        '<svelte:window onkeydown={f} /><button onclick={() => n++} bind:this={el} bind:value={v} use:tip transition:fade {@attach a}>+</button>',
+        '<C onpick={g} /><a onclick="go()">plain</a><Nav online={true} only={x} onselect={() => {}} />',
+      ].join("\n"),
+    );
+    expect(clientOnly).toEqual([
+      { what: "onkeydown", line: 8 },
+      { what: "onclick", line: 8 },
+      { what: "bind:value", line: 8 },
+      { what: "use:tip", line: 8 },
+      { what: "transition:fade", line: 8 },
+      { what: "{@attach}", line: 8 },
+      { what: "onselect", line: 9 },
+      { what: "onMount()", line: 5 },
+      { what: "$effect()", line: 6 },
+    ]);
+    expect(components).toEqual(["./Nav.svelte"]);
+  });
+
+  it("analyzeSource goes by what onMount and $effect are, not by the name", () => {
+    const code = (script: string) => analyzeSource(`<script>${script}</script>`).clientOnly.map((c) => c.what);
+    expect(code('import { onMount as mounted } from "svelte"; mounted(() => {});')).toEqual(["onMount()"]);
+    expect(code("function onMount(f) { f(); } onMount(() => {});")).toEqual([]);
+    expect(code("const inside = $effect.tracking(); $effect.root(() => {});")).toEqual(["$effect()"]);
+  });
+
+  it("warns about browser-only code in static pages, their layouts and the components they import", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-static-code-"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mkdirSync(join(dir, "app"));
+      writeFileSync(join(dir, "_Menu.svelte"), "<button onclick={() => {}}>menu</button>\n");
+      writeFileSync(join(dir, "app", "layout.svelte"), '<script>import Menu from "../_Menu.svelte"; let { children } = $props();</script>\n<Menu />{@render children()}\n');
+      writeFileSync(join(dir, "app", "about.svelte"), "<p>about</p>\n");
+      writeFileSync(join(dir, "app", "form.svelte"), "<script>let n = $state(0);</script>\n<button onclick={() => n++}>{n}</button>\n");
+      writeFileSync(join(dir, "plain.svelte"), "<p>plain</p>\n");
+      const app = pages({ pagesDir: dir, hydrate: true });
+      expect(app.staticEntries()).toEqual(["app/about", "plain"]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toMatch(/onclick \(\S*_Menu\.svelte:1\) in "app\/about"\n/);
+      expect(warn.mock.calls[0]?.[0]).not.toContain("app/form");
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("a page that imports an island is server-rendered (no page bundle); hydrate keeps it interactive", () => {
