@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0
 
 - **feat: islands.** A component named `*.island.svelte` is an island. A
   page that imports one is rendered on the server and ships no page bundle;
