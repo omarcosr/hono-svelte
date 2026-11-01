@@ -48,3 +48,38 @@ test("hashed assets are served immutable", async ({ page, request }) => {
   const res = await request.get(href!);
   expect(res.headers()["cache-control"]).toContain("immutable");
 });
+
+test("islands hydrate on their own, each with its props, in a server-rendered page", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (m) => {
+    if (m.type() === "error" || m.type() === "warning") errors.push(m.text());
+  });
+  await page.goto("/islands");
+  await expect(page.getByTestId("page")).toHaveText("Static around the islands");
+  await expect(page.getByTestId("first")).toHaveText("2");
+  await expect(page.getByTestId("second")).toHaveText("10");
+  await expect(page.getByTestId("first")).toHaveCSS("color", "rgb(0, 0, 255)");
+  // Hydrated in place: the first click already counts, and the other island keeps its own state.
+  await expect(async () => {
+    await page.getByTestId("first").click();
+    await expect(page.getByTestId("first")).not.toHaveText("2", { timeout: 200 });
+  }).toPass();
+  await expect(page.getByTestId("first")).toHaveText("3");
+  await expect(page.getByTestId("second")).toHaveText("10");
+  await expect(page.locator("hono-island button")).toHaveCount(2);
+  expect(errors.filter((e) => /hydrat/i.test(e))).toEqual([]);
+});
+
+test("an islands page ships only the island bundle", async ({ page }) => {
+  prodOnly();
+  const scripts: string[] = [];
+  page.on("request", (r) => {
+    if (r.resourceType() === "script") scripts.push(new URL(r.url()).pathname);
+  });
+  await page.goto("/islands");
+  await expect(page.getByTestId("second")).toHaveText("10");
+  const entries = await page.locator('script[type="module"]').evaluateAll((els) => els.map((el) => el.getAttribute("src")));
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatch(/\/island\/__\/shared\/Counter-/);
+  expect(scripts).toContain(entries[0]);
+});

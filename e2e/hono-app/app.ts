@@ -10,6 +10,7 @@ export function createApp(options: ShellOptions, setup?: (app: Hono) => void): H
   app.get("/", (c) => c.render("index"));
   app.get("/nested/static", (c) => c.render("nested/static"));
   app.get("/nested/client", (c) => c.render("nested/client"));
+  app.get("/islands", (c) => c.render("islands"));
   app.get("/private", basicAuth({ username: "user", password: "pass" }), (c) => c.text("ok"));
   app.notFound(notFoundHandler());
   app.onError(errorHandler());
