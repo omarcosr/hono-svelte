@@ -62,6 +62,7 @@ describe("islands: discovery", () => {
         '  import { onMount } from "svelte";',
         '  import Nav from "./Nav.svelte";',
         '  import C from "./C.island.svelte";',
+        '  import Card from "$lib/Card.svelte";',
         "  onMount(() => {});",
         "  $effect.pre(() => {});",
         "</script>",
@@ -70,17 +71,28 @@ describe("islands: discovery", () => {
       ].join("\n"),
     );
     expect(clientOnly).toEqual([
-      { what: "onkeydown", line: 8 },
-      { what: "onclick", line: 8 },
-      { what: "bind:value", line: 8 },
-      { what: "use:tip", line: 8 },
-      { what: "transition:fade", line: 8 },
-      { what: "{@attach}", line: 8 },
-      { what: "onselect", line: 9 },
-      { what: "onMount()", line: 5 },
-      { what: "$effect()", line: 6 },
+      { what: "onkeydown", line: 9 },
+      { what: "onclick", line: 9 },
+      { what: "bind:value", line: 9 },
+      { what: "use:tip", line: 9 },
+      { what: "transition:fade", line: 9 },
+      { what: "{@attach}", line: 9 },
+      { what: "onselect", line: 10 },
+      { what: "onMount()", line: 6 },
+      { what: "$effect()", line: 7 },
     ]);
-    expect(components).toEqual(["./Nav.svelte"]);
+    expect(components).toEqual(["./Nav.svelte", "$lib/Card.svelte"]);
+  });
+
+  it("analyzeSource leaves handlers and bindings that pass a prop on to the caller, and boundary onerror", () => {
+    const { clientOnly } = analyzeSource(
+      [
+        "<script>let { onclick, value = $bindable(), ...rest } = $props(); const props = $props();</script>",
+        "<button {onclick} onkeydown={rest.onkeydown} onfocus={props.onfocus}>x</button><input bind:value />",
+        "<svelte:boundary onerror={(e) => console.error(e)}>y</svelte:boundary><button onclick={() => {}}>z</button>",
+      ].join("\n"),
+    );
+    expect(clientOnly).toEqual([{ what: "onclick", line: 3 }]);
   });
 
   it("analyzeSource goes by what onMount and $effect are, not by the name", () => {
@@ -90,23 +102,36 @@ describe("islands: discovery", () => {
     expect(code("const inside = $effect.tracking(); $effect.root(() => {});")).toEqual(["$effect()"]);
   });
 
-  it("warns about browser-only code in static pages, their layouts and the components they import", () => {
+  it("warns about browser-only code in static pages, their layouts and the components they import, aliases included", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hs-static-code-"));
+    const ui = mkdtempSync(join(tmpdir(), "hs-static-ui-"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       mkdirSync(join(dir, "app"));
-      writeFileSync(join(dir, "_Menu.svelte"), "<button onclick={() => {}}>menu</button>\n");
+      writeFileSync(join(ui, "Toggle.svelte"), "<button onclick={() => {}}>toggle</button>\n");
+      writeFileSync(join(ui, "Button.svelte"), "<script>let { onclick, children } = $props();</script>\n<button {onclick}>{@render children?.()}</button>\n");
+      writeFileSync(join(dir, "_Menu.svelte"), '<script>import Toggle from "$ui/Toggle.svelte"; import Button from "$ui/Button.svelte";</script>\n<Toggle /><Button>menu</Button>\n');
       writeFileSync(join(dir, "app", "layout.svelte"), '<script>import Menu from "../_Menu.svelte"; let { children } = $props();</script>\n<Menu />{@render children()}\n');
       writeFileSync(join(dir, "app", "about.svelte"), "<p>about</p>\n");
       writeFileSync(join(dir, "app", "form.svelte"), "<script>let n = $state(0);</script>\n<button onclick={() => n++}>{n}</button>\n");
       writeFileSync(join(dir, "plain.svelte"), "<p>plain</p>\n");
       const app = pages({ pagesDir: dir, hydrate: true });
       expect(app.staticEntries()).toEqual(["app/about", "plain"]);
+      // What Vite's resolver does with a `$ui` alias.
+      const context = { resolve: async (spec: string, importer: string) => ({ id: spec.startsWith("$ui/") ? join(ui, spec.slice(4)) : resolve(dirname(importer), spec) }) };
+      await (app.buildStart as unknown as (this: typeof context) => Promise<void>).call(context);
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0]?.[0]).toMatch(/onclick \(\S*_Menu\.svelte:1\) in "app\/about"\n/);
-      expect(warn.mock.calls[0]?.[0]).not.toContain("app/form");
+      const message = warn.mock.calls[0]?.[0] as string;
+      expect(message).toMatch(/onclick \(\S*Toggle\.svelte:1\) in "app\/about"\n/);
+      expect(message).not.toContain("Button.svelte");
+      expect(message).not.toContain("app/form");
+      // Same findings on the next check (a dev save): not printed again.
+      await (app.buildStart as unknown as (this: typeof context) => Promise<void>).call(context);
+      expect(warn).toHaveBeenCalledTimes(1);
     } finally {
-      warn.mockRestore();
+      vi.restoreAllMocks();
+      rmSync(ui, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });

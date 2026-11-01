@@ -6,9 +6,12 @@
   (no instance `<script>`, or one that imports an island) ships no bundle of
   its own, so an `onclick={…}`, `bind:`, `use:`, transition, `{@attach}`,
   `onMount()` or `$effect()` in it, in its layouts or in the components they
-  import (relative paths) silently did nothing in the browser. `vite` and
-  `vite build` now list each one with its file, line and pages, and point to
-  islands. Island elements and plain `onclick="…"` strings are left alone.
+  import silently did nothing in the browser. `vite` and `vite build` now
+  list each one with its file, line and pages, and point to islands. Imports
+  go through Vite's resolver, so `$lib/…` aliases and tsconfig paths are
+  followed (package components are not). Island elements, plain
+  `onclick="…"` strings, handlers and `bind:` that only pass a prop on, and
+  `<svelte:boundary onerror>` are left alone.
 
 ## 0.13.0
 
