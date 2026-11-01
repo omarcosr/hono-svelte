@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0
 
 - **feat: warn about browser-only code in static pages.** A static page
   (no instance `<script>`, or one that imports an island) ships no bundle of
