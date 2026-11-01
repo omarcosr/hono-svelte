@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0
 
 - **feat(preset): runes mode by default.** `honoSvelte()` compiles the
   app's components in runes mode, including those that use no rune. Svelte
