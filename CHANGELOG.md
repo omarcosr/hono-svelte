@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **feat(preset): runes mode by default.** `honoSvelte()` compiles the
+  app's components in runes mode, including those that use no rune. Svelte
+  used to compile those in legacy mode, and every page using one loaded the
+  legacy runtime flag (a small extra chunk, one more request). Libraries in
+  `node_modules` keep their own mode. **Breaking for legacy syntax:** a
+  component with `export let`, `$:`, `on:click` or `<slot>` no longer
+  compiles; migrate it or pass `honoSvelte({ runes: false })`. A top-level
+  `let` that is reassigned is no longer reactive without `$state` (Svelte
+  warns with `non_reactive_update`).
+
 ## 0.11.0
 
 - **feat(vite): pages from several folders.** `pagesDir` (on `pages()` and

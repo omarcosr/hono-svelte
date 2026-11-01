@@ -405,6 +405,7 @@ Vite config factory (`hono-svelte/vite`): `export default honoSvelte({ … })`. 
 | `plugins` | `[]` | Extra Vite plugins for every mode (Tailwind, …) |
 | `devServer` / `build` | — | Extra options forwarded to `@hono/vite-dev-server` / `@hono/vite-build` |
 | `staticFiles` | `{}` | Static files of the server bundle, served by [`staticFiles()`](#static-files-in-production) instead of `@hono/vite-build`'s plain `serveStatic`: `{ precompressed, sourcemaps, cacheControl }`. `false` restores the plain `serveStatic` (no cache headers, no precompression) |
+| `runes` | `true` | Compiles the app's components in runes mode, even those that use no rune (Svelte would compile them in legacy mode and ship its legacy flag in a shared chunk). Libraries in `node_modules` keep their own mode. `false` leaves `svelte()` to `svelte.config.js` (legacy components, or your own `vitePlugin.dynamicCompileOptions`); a manual config gets the same with `vitePlugin.dynamicCompileOptions` in `svelte.config.js` |
 
 The returned function exposes `.pages` (the underlying plugin). The optional peers are resolved from the app at config time, so an app that writes its own config never needs them.
 

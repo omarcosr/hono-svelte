@@ -61,3 +61,10 @@ describe("honoSvelte() build: asset URLs", () => {
     expect(css).toContain(`url(${font})`);
   });
 });
+
+describe("honoSvelte() build: runes", () => {
+  it("compiles the app's components in runes mode: no legacy-mode chunk for pages without runes", () => {
+    // first.svelte and second.svelte have a <script> but no rune; in legacy mode both import svelte's legacy flag (a shared chunk).
+    expect(Object.values(manifest).map((chunk) => chunk.file)).not.toContainEqual(expect.stringMatching(/legacy/));
+  });
+});
