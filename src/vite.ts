@@ -3,6 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { manifestKeyFor, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
+import { PREFETCH_ASSET, prefetchHoverCode } from "./prefetch.js";
 import {
   extractDataFromModuleScript,
   extractPageDataType,
@@ -934,6 +935,20 @@ function entryMountSource(page: PageSpec): string {
         throw serverOnlyError(id, [...(graph?.getModuleById(id)?.importers ?? [])].flatMap((m) => m.id ?? []));
       }
       return null;
+    },
+    // Client build: the hover-prefetch map of every client entry, as a hashed file the shell links (see shell `prefetch`).
+    generateBundle(_, bundle) {
+      const consumer = (this as { environment?: { config?: { consumer?: string } } }).environment?.config?.consumer;
+      if (viteCommand !== "build" || consumer === "server") return;
+      const client = new Set(listPages().filter((p) => !p.isStatic).map((p) => ENTRY_RESOLVED_PREFIX + p.entryName));
+      const map: Record<string, string> = {};
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type === "chunk" && chunk.isEntry && chunk.facadeModuleId && client.has(chunk.facadeModuleId)) {
+          map[chunk.facadeModuleId.slice(ENTRY_RESOLVED_PREFIX.length)] = "/" + chunk.fileName;
+        }
+      }
+      if (Object.keys(map).length === 0) return;
+      this.emitFile({ type: "asset", name: "prefetch.js", originalFileName: PREFETCH_ASSET, source: prefetchHoverCode(map) });
     },
     buildEnd(error) {
       const consumer = (this as { environment?: { config?: { consumer?: string } } }).environment?.config?.consumer;

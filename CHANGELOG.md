@@ -12,6 +12,17 @@
   `let` that is reassigned is no longer reactive without `$state` (Svelte
   warns with `non_reactive_update`).
 
+- **perf: `prefetch: "hover"` moves its page map out of the HTML.** The
+  script carried the URL of every other client page inline, so each
+  `no-store` HTML response repeated it (3.2 KB raw for 45 pages, about 1 KB
+  after brotli). The client build now emits it as a hashed file
+  (`static/prefetch-<hash>.js`, listed in the manifest as
+  `hono-svelte/prefetch.js`) and the shell links it with a module script,
+  cached as immutable like the page bundles. On a 45-page app the HTML
+  dropped from 2.9 to 1.9 KB (login) and from 5.0 to 4.1 KB (home) in
+  brotli. A custom `assets` resolver, or a manifest without the file, keeps
+  the inline script.
+
 ## 0.11.0
 
 - **feat(vite): pages from several folders.** `pagesDir` (on `pages()` and

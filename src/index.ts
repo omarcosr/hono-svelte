@@ -12,6 +12,7 @@ import { renderHead, withoutComponentStyles, type HeadProps } from "./head.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
 import { PAGE_ATTRIBUTES, pageContext, type PageInfo } from "./page.js";
+import { PREFETCH_ASSET, prefetchHoverCode } from "./prefetch.js";
 import {
   allEntries as autoAllEntries,
   clientManifest as autoClientManifest,
@@ -432,15 +433,7 @@ type PrefetchTarget = { entry: string; url: string };
 
 function prefetchHoverScript(nonce: string | undefined, targets: PrefetchTarget[]): string {
   if (targets.length === 0) return "";
-  const map = JSON.stringify(Object.fromEntries(targets.map((t) => [t.entry, t.url]))).replace(/</g, "\\u003c");
-  // Links map to entries by path: "/" -> "index", "/a" -> "a" or "a/index".
-  const code =
-    `(function(){var m=${map};` +
-    `function pre(u){if(document.querySelector('link[rel=\\"modulepreload\\"][href=\\"'+u+'\\"]'))return;` +
-    `var l=document.createElement('link');l.rel='modulepreload';l.href=u;document.head.appendChild(l);}` +
-    `document.addEventListener('mouseover',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;` +
-    `if(!a)return;try{var p=new URL(a.href,location.origin).pathname.replace(/^\\/+|\\/+$/g,'');` +
-    `var u=m[p]||m[p?p+'/index':'index'];if(u)pre(u);}catch(_){}},{passive:true});})();`;
+  const code = prefetchHoverCode(Object.fromEntries(targets.map((t) => [t.entry, t.url])));
   return `${LT}script${nonceAttr(nonce)}>${code}${LT}/script>`;
 }
 
@@ -564,6 +557,8 @@ export function shell(options: ShellOptions = {}) {
   const prefetchTargets = memoByEntry((entry): PrefetchTarget[] =>
     (known ?? []).filter((e) => e !== entry && !isSsrEntry(e)).map((e) => ({ entry: e, url: prodUrl(e) })),
   );
+  // The hover script the client build emitted (cached like any hashed file); a custom resolver keeps the inline map.
+  const prefetchFile = typeof assetsOpt === "function" ? undefined : manifest?.[PREFETCH_ASSET]?.file;
 
   // Internally untyped: the generated dts narrows the keys for the app, the shell indexes by name.
   const layoutDataLoaders: Record<string, LayoutDataLoader> = (options.layoutData ?? {}) as Record<string, LayoutDataLoader>;
@@ -640,7 +635,9 @@ export function shell(options: ShellOptions = {}) {
     if (isProd && options.prefetch === "all") {
       out += linkTags("modulepreload", prefetchTargets(entryName).map((t) => t.url), nAttr);
     } else if (isProd && options.prefetch === "hover") {
-      out += prefetchHoverScript(nonce, prefetchTargets(entryName));
+      out += prefetchFile
+        ? `${LT}script type="module" src="${escapeAttr("/" + prefetchFile.replace(/^\/+/, ""))}"${nAttr}>${LT}/script>`
+        : prefetchHoverScript(nonce, prefetchTargets(entryName));
     }
     return out + `${LT}script type="module" src="${escapeAttr(src)}"${nAttr}>${LT}/script>`;
   }
