@@ -6,7 +6,8 @@
   page that imports one is rendered on the server and ships no page bundle;
   each island gets its own bundle, which hydrates every copy of it on the
   page with the props the server rendered (JSON in a `<hono-island>`
-  element). Islands in layouts work too. Interactive pages (`hydrate`,
+  element; in dev the island warns about function props JSON drops).
+  Islands in layouts work too. Interactive pages (`hydrate`,
   `alwaysClient`, or a script without islands) ship their whole bundle as
   before, and the island inside them is a plain component. No configuration,
   in the preset or the manual Vite config.

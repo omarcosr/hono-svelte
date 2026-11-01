@@ -1,5 +1,5 @@
 <script lang="ts">
-  let { start, label }: { start: number; label: string } = $props();
+  let { start, label }: { start: number; label: string; onchange?: () => void } = $props();
   // svelte-ignore state_referenced_locally
   let count = $state(start);
 </script>

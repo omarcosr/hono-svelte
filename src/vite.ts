@@ -1,5 +1,5 @@
 import { existsSync, globSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { manifestKeyFor, privateAssetDirs, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
@@ -914,13 +914,17 @@ function entryMountSource(page: PageSpec): string {
    * boundary renders the `<!--[-->…<!--]-->` pair `hydrate()` starts from,
    * so the island's bundle hydrates it on its own.
    */
-  function islandWrapperSource(absFile: string): string {
+  function islandWrapperSource(absFile: string, dev: boolean): string {
     return (
       "<script>\n" +
       `  import Island from ${JSON.stringify(rootImportPath(absFile))};\n` +
       "  const props = $props();\n" +
+      // Dev: the props the JSON drops (callbacks, snippets, children), for the island's bundle to warn about.
+      (dev ? '  const dropped = Object.keys(props).filter((k) => typeof props[k] === "function").join(", ") || undefined;\n' : "") +
       "</script>\n" +
-      `<${ISLAND_TAG} data-island={${JSON.stringify(islandName(absFile))}} data-props={JSON.stringify(props)} style="display:contents">` +
+      `<${ISLAND_TAG} data-island={${JSON.stringify(islandName(absFile))}} data-props={JSON.stringify(props)}` +
+      (dev ? " data-dropped={dropped}" : "") +
+      ` style="display:contents">` +
       `<svelte:boundary><Island {...props} /></svelte:boundary></${ISLAND_TAG}>\n`
     );
   }
@@ -939,6 +943,12 @@ function entryMountSource(page: PageSpec): string {
       " path: root?.getAttribute(\"data-hs-path\") ?? location.pathname," +
       " route: root?.getAttribute(\"data-hs-route\") ?? location.pathname }]]);\n" +
       "for (const target of document.querySelectorAll(" + JSON.stringify(selector) + ")) {\n" +
+      (viteCommand !== "build"
+        ? '  const dropped = target.getAttribute("data-dropped");\n' +
+          "  if (dropped) console.warn(" +
+          JSON.stringify(`[hono-svelte] island ${name}: props travel as JSON, so these function props are not in the browser: `) +
+          " + dropped);\n"
+        : "") +
       '  hydrate(Island, { target, props: JSON.parse(target.getAttribute("data-props") || "{}"), context });\n' +
       "}\n"
     );
@@ -1019,11 +1029,11 @@ function entryMountSource(page: PageSpec): string {
         const ssr = options?.ssr === true || consumer === "server";
         // Client build: the island gets its own bundle the moment a page reaches it.
         if (viteCommand === "build" && !ssr) {
-          this.emitFile({ type: "chunk", id: ENTRY_RESOLVED_PREFIX + islandName(file), name: islandName(file).slice(1) });
+          this.emitFile({ type: "chunk", id: ENTRY_RESOLVED_PREFIX + islandName(file), name: "island-" + basename(file, ISLAND_SUFFIX) });
         }
         // Compiled here, not by the svelte plugin: its HMR mode puts an anchor after the island
         // that the island's bundle, hydrating the island alone, would not expect.
-        const { js } = compile(islandWrapperSource(file), {
+        const { js } = compile(islandWrapperSource(file, viteCommand !== "build"), {
           filename: file + ISLAND_WRAPPER,
           generate: ssr ? "server" : "client",
           dev: viteCommand !== "build",

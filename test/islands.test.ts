@@ -73,11 +73,12 @@ describe("islands: build", () => {
       { start: 5, label: '"quoted" & <tagged>' },
     ]);
     expect(home).not.toContain("<tagged>");
+    expect(home).not.toContain("data-dropped"); // dev only
   });
 
   it("ships the island's bundle once and no page bundle", () => {
     const src = createManifestAssets(manifest)(ISLAND);
-    expect(src).toMatch(/^\/static\/chunks\/island\/src\/components\/Counter-[\w-]+\.js$/);
+    expect(src).toMatch(/^\/static\/chunks\/island-Counter-[\w-]+\.js$/);
     const scripts = [...home.matchAll(/<script type="module" src="([^"]+)"/g)].map((m) => m[1]);
     expect(scripts).toEqual([src]);
     const code = readFileSync(join(outDir, src), "utf8");

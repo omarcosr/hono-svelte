@@ -175,7 +175,8 @@ A mostly static page with a few interactive parts doesn't have to ship the whole
 ```
 
 - A page that imports an island is rendered on the server, like a page without `<script>`: no page bundle. Each island gets its own bundle, linked only by the pages that render it, and it hydrates every copy of the island on the page. Islands work in layouts too.
-- Props travel as JSON in the markup (`<hono-island data-props>`): strings, numbers, booleans, arrays and plain objects. Functions, snippets and `children` don't reach the browser. Anything you pass is public.
+- Only the page's own imports count: a page that imports `Header.svelte`, which imports an island, ships its whole bundle. Import the island in the page itself, or put it in a layout.
+- Props travel as JSON in the markup (`<hono-island data-props>`): strings, numbers, booleans, arrays and plain objects. Functions, snippets and `children` don't reach the browser (in `vite` dev the island warns in the console when it gets one). Anything you pass is public.
 - The page's own script runs on the server only. Its `$state` doesn't react in the browser; put the interactivity in an island.
 - An interactive page (an instance `<script>` that imports no island, or a page in `hydrate` / `alwaysClient`) ships its whole bundle as before. An island inside it is a regular component.
 - Islands hydrate when their bundle loads; there are no `visible` or `idle` strategies yet. No configuration: the plugin finds islands by the name and builds their bundles (the manual Vite config too).
