@@ -471,6 +471,7 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 | `stylesEntry` | — | Global stylesheet (e.g. `"src/app.css"`): `input()` adds it as `styles` and `shell()` uses it as its `stylesEntry` default — one place for the path. `false` = none, and the shell links no global sheet |
 | `hydrate` | `false` | Server-render interactive pages and hydrate them: `true` for all, or a list of entries — see [Server rendering interactive pages](#server-rendering-interactive-pages) |
 | `serverOnly` | `[]` | Extra server-only globs (relative to the Vite root) on top of `**/*.server.*` and `**/server/**`: client code reaching one fails the build and the dev client. `false` turns the check off |
+| `privatePages` | `[]` | Page folders only some users reach, e.g. `["admin"]`. Prefetch (`"hover"` map, inline map, `"all"`) never names their pages outside the folder, so public HTML and the public map don't list the admin's pages; the folder's own pages load a map with them. Their files stay public: protect the data on the server |
 
 Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `dataTypes()` (extracted `Data` declarations), `types()` (entry union), `typeDeclarations()` (hono module snippet), `dtsPath()` / `writeDts()` (generated `.d.ts`), `validateConfig()` (fail fast on bad Vite setup).
 

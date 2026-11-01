@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, type Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createManifestAssets, manifestCssFor, manifestKeyFor, type ViteManifest } from "../src/assets.js";
-import { PREFETCH_ASSET } from "../src/prefetch.js";
+import { PREFETCH_ASSET, privatePrefetchAsset } from "../src/prefetch.js";
 import { clientBundlesDeps, precompress } from "../src/preset.js";
 import { pages } from "../src/vite.js";
 
@@ -92,6 +92,27 @@ describe("vite build (client)", () => {
     expect(code).toContain(`"docs/counter":"${createManifestAssets(manifest)("docs/counter")}"`);
     expect(code).not.toContain('"docs":'); // static page: no JS to preload
   });
+
+  it("privatePages: the public map leaves the folder out; the folder gets its own map", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hono-svelte-private-"));
+    try {
+      const privatePages = pages({ pagesDir: join(fixture, "pages"), privatePages: ["docs"] });
+      (privatePages.configResolved as (config: unknown) => void)({ root: fixture, plugins: [], mode: "client", command: "build" });
+      await build({
+        root: fixture,
+        configFile: false,
+        logLevel: "silent",
+        plugins: [svelte(), privatePages],
+        build: { outDir: dir, emptyOutDir: true, manifest: true, rollupOptions: { input: privatePages.input() } },
+      });
+      const built = JSON.parse(readFileSync(join(dir, ".vite", "manifest.json"), "utf8")) as ViteManifest;
+      const read = (key: string) => readFileSync(join(dir, built[key]?.file as string), "utf8");
+      expect(read(PREFETCH_ASSET)).not.toContain("docs/counter");
+      expect(read(privatePrefetchAsset("docs"))).toContain(`"docs/counter":"${createManifestAssets(built)("docs/counter")}"`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
 });
 

@@ -108,6 +108,33 @@ describe("regressions", () => {
     expect(links).toEqual(["/static/index.js", "/static/dash/index.js"]);
   });
 
+  it("privatePages: only pages inside a private folder prefetch its pages (inline map, all, emitted file)", async () => {
+    const meta = { __allEntries: ["home", "dash", "admin/index", "admin/users"], __clientEntries: ["home", "dash", "admin/index", "admin/users"], __privatePages: ["admin"] };
+    const render = async (entry: string, extra: Record<string, unknown>) => {
+      const app = new Hono();
+      app.use("/*", shell({ ssrPages: manifest({}, meta), isProd: true, ...extra }));
+      app.get("/", (c) => c.render(entry));
+      return (await app.request("/")).text();
+    };
+    // Public page: no admin entry anywhere in its HTML.
+    for (const prefetch of ["hover", "all"] as const) {
+      const html = await render("home", { prefetch });
+      expect(html).toContain("/static/dash.js");
+      expect(html).not.toContain("admin");
+    }
+    // A page in the folder still prefetches the folder and the public pages.
+    const inside = await render("admin/index", { prefetch: "hover" });
+    expect(inside).toContain('"admin/users":"/static/admin/users.js"');
+    expect(inside).toContain('"home":"/static/home.js"');
+    // Emitted files: each side links its own map.
+    const files = {
+      "hono-svelte/prefetch.js": { file: "static/prefetch-pub.js" },
+      "hono-svelte/prefetch/admin.js": { file: "static/prefetch-admin-x.js" },
+    };
+    expect(await render("home", { prefetch: "hover", assets: files })).toContain('src="/static/prefetch-pub.js"');
+    expect(await render("admin/users", { prefetch: "hover", assets: files })).toContain('src="/static/prefetch-admin-x.js"');
+  });
+
   it("errorHandler keeps the headers of HTTPException responses (WWW-Authenticate)", async () => {
     const app = new Hono();
     app.use("/*", shell({ strict: false }));

@@ -3,7 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { manifestKeyFor, type ViteManifest } from "./assets.js";
 import { getIds } from "./ids.js";
 import { isLayoutEntry, layoutChain } from "./layouts.js";
-import { PREFETCH_ASSET, prefetchHoverCode } from "./prefetch.js";
+import { PREFETCH_ASSET, prefetchHoverCode, privateDirOf, privatePrefetchAsset } from "./prefetch.js";
 import {
   extractDataFromModuleScript,
   extractPageDataType,
@@ -97,6 +97,15 @@ export type PagesOptions = {
    * @default []
    */
   serverOnly?: string[] | false;
+  /**
+   * Page folders only some users reach, e.g. `["admin"]`. Prefetch never
+   * names their pages from outside the folder: the public hover map, the
+   * inline map and `prefetch: "all"` leave them out, so public HTML does not
+   * list the admin's pages and bundles. Pages inside a folder still prefetch
+   * its pages. Their files stay public: guard the data on the server.
+   * @default []
+   */
+  privatePages?: string[];
 };
 
 export type PagesPlugin = Plugin & {
@@ -377,6 +386,7 @@ export function pages(options: PagesOptions = {}): PagesPlugin {
   const hydrated = (entryName: string): boolean =>
     options.hydrate === true || (Array.isArray(options.hydrate) && options.hydrate.includes(entryName));
   const header = options.generatedHeader ?? "// @generated - hono-svelte, do not edit.";
+  const privateDirs = (options.privatePages ?? []).map((dir) => normalizeSlashes(dir).replace(/^\/+|\/+$/g, "")).filter(Boolean);
   const stylesEntry = options.stylesEntry
     ? normalizeSlashes(options.stylesEntry).replace(/^(\.?\/)+/, "")
     : options.stylesEntry === false
@@ -775,6 +785,7 @@ function layoutImportPath(layout: LayoutSpec): string {
       "ssrPages.__allEntries = allEntries;",
       "ssrPages.__layouts = ssrLayouts;",
       "ssrPages.__clientEntries = clientEntries;",
+      ...(privateDirs.length > 0 ? ["ssrPages.__privatePages = " + JSON.stringify(privateDirs) + ";"] : []),
       // Several folders: the shell takes each page's chain from here, since a
       // layout wraps only its own folder (one folder: the name rule is the same).
       ...(pagesDirs.length > 1
@@ -941,14 +952,23 @@ function entryMountSource(page: PageSpec): string {
       const consumer = (this as { environment?: { config?: { consumer?: string } } }).environment?.config?.consumer;
       if (viteCommand !== "build" || consumer === "server") return;
       const client = new Set(listPages().filter((p) => !p.isStatic).map((p) => ENTRY_RESOLVED_PREFIX + p.entryName));
-      const map: Record<string, string> = {};
+      const urls: [string, string][] = [];
       for (const chunk of Object.values(bundle)) {
         if (chunk.type === "chunk" && chunk.isEntry && chunk.facadeModuleId && client.has(chunk.facadeModuleId)) {
-          map[chunk.facadeModuleId.slice(ENTRY_RESOLVED_PREFIX.length)] = "/" + chunk.fileName;
+          urls.push([chunk.facadeModuleId.slice(ENTRY_RESOLVED_PREFIX.length), "/" + chunk.fileName]);
         }
       }
-      if (Object.keys(map).length === 0) return;
-      this.emitFile({ type: "asset", name: "prefetch.js", originalFileName: PREFETCH_ASSET, source: prefetchHoverCode(map) });
+      if (urls.length === 0) return;
+      // One map for public pages, and one per private folder (public pages + its own), loaded only inside it.
+      for (const dir of [undefined, ...privateDirs]) {
+        const map = Object.fromEntries(urls.filter(([entry]) => [undefined, dir].includes(privateDirOf(entry, privateDirs))));
+        this.emitFile({
+          type: "asset",
+          name: dir ? `prefetch-${dir.replace(/\//g, "-")}.js` : "prefetch.js",
+          originalFileName: dir ? privatePrefetchAsset(dir) : PREFETCH_ASSET,
+          source: prefetchHoverCode(map),
+        });
+      }
     },
     buildEnd(error) {
       const consumer = (this as { environment?: { config?: { consumer?: string } } }).environment?.config?.consumer;
