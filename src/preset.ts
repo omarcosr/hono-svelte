@@ -50,7 +50,19 @@ export type HonoSvelteOptions = PagesOptions & {
    * the plain serveStatic and skips precompression.
    */
   staticFiles?: false | Omit<StaticFilesOptions, "root" | "hashedPrefix">;
+  /**
+   * Compile the app's components in runes mode, including those that use no
+   * rune (Svelte would compile them in legacy mode and ship its legacy
+   * runtime flag). Libraries in `node_modules` keep their own mode. `false`
+   * leaves `svelte()` to `svelte.config.js`, e.g. for an app with legacy
+   * components or its own `vitePlugin.dynamicCompileOptions`.
+   * @default true
+   */
+  runes?: boolean;
 };
+
+/** Runes mode for the app's own components; libraries keep the mode Svelte picks for them (dev prebundling passes OS paths). */
+const appRunes = ({ filename }: { filename: string }) => (filename.split(/[/\\]/).includes("node_modules") ? undefined : { runes: true });
 
 export type HonoSvelteConfig = ((env: ConfigEnv) => Promise<UserConfig>) & {
   /** The underlying `pages()` plugin (entries, layouts, dts helpers). */
@@ -225,7 +237,7 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
   const config = async ({ command, mode }: ConfigEnv): Promise<UserConfig> => {
     const runtime = options.runtime ?? detectRuntime();
     const { svelte } = await loadPeer("@sveltejs/vite-plugin-svelte", "@sveltejs/vite-plugin-svelte");
-    const plugins: PluginOption[] = [...extra, svelte(), appPages];
+    const plugins: PluginOption[] = [...extra, svelte(options.runes === false ? undefined : { dynamicCompileOptions: appRunes }), appPages];
     if (staticOptions !== false && staticOptions?.precompressed !== false) plugins.push(precompress());
 
     const clientBuild = (): NonNullable<UserConfig["build"]> => ({
