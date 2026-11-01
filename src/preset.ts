@@ -61,8 +61,8 @@ export type HonoSvelteOptions = PagesOptions & {
   runes?: boolean;
 };
 
-/** Runes mode for the app's own components; libraries keep the mode Svelte picks for them. */
-const appRunes = ({ filename }: { filename: string }) => (filename.includes("/node_modules/") ? undefined : { runes: true });
+/** Runes mode for the app's own components; libraries keep the mode Svelte picks for them (dev prebundling passes OS paths). */
+const appRunes = ({ filename }: { filename: string }) => (filename.split(/[/\\]/).includes("node_modules") ? undefined : { runes: true });
 
 export type HonoSvelteConfig = ((env: ConfigEnv) => Promise<UserConfig>) & {
   /** The underlying `pages()` plugin (entries, layouts, dts helpers). */
