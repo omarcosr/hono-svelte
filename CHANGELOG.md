@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **feat: `privatePages` files are no longer public.** Their bundles were
+  plain static files: anyone could load the admin's JS and CSS (screens,
+  API calls) without signing in. With `privatePages: ["admin"]` the static
+  layer of `honoSvelte()` now leaves the files only those folders use (read
+  from the client manifest: entries, and the chunks, CSS and assets no
+  public entry reaches) to the app, and the new `privateAssets({ serve,
+  allow })` middleware serves them after the app's own check; everyone
+  else gets a 404. `staticFiles()` gains `privateFiles` (paths it leaves to
+  the app) and `hashedCacheControl` (`"private, …"` for files served behind
+  a session, so a CDN keeps no copy). **Breaking for apps using
+  `privatePages`:** without `privateAssets()` those files now 404.
+
 ## 0.12.0
 
 - **feat(preset): runes mode by default.** `honoSvelte()` compiles the

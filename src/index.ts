@@ -1,9 +1,10 @@
-import type { Next } from "hono";
+import type { Context, MiddlewareHandler, Next } from "hono";
 import type { Component } from "svelte";
 import {
   createManifestAssets,
   manifestCssFor,
   manifestImportsFor,
+  privateAssetDirs,
   type AssetsResolver,
   type ViteManifest,
 } from "./assets.js";
@@ -31,6 +32,7 @@ export {
   manifestImportsFor,
   manifestKeyFor,
   manifestKeysFor,
+  privateAssetDirs,
 } from "./assets.js";
 export type {
   AssetsResolver,
@@ -508,6 +510,36 @@ const metaOf = (pages: Record<string, SsrPageLoader>): ManifestMeta => pages as 
 type SetEntryRenderer = (
   renderer: (entryName: string, data?: Record<string, unknown>) => Response | Promise<Response>,
 ) => void;
+
+export type PrivateAssetsOptions = {
+  /** Serves an allowed file: `staticFiles(serveStatic, { root: "./dist", hashedCacheControl: "private, max-age=31536000, immutable" })`. */
+  serve: MiddlewareHandler;
+  /** Whether this request may load files of these `privatePages` folders (e.g. an admin session). */
+  allow: (c: Context, dirs: string[]) => boolean | Promise<boolean>;
+  /** Defaults to the manifest `pages()` embeds. */
+  manifest?: ViteManifest;
+  /** Defaults to `pages({ privatePages })`. */
+  privatePages?: string[];
+};
+
+/**
+ * `app.use("/static/*", privateAssets({ serve, allow }))` — the client files only `privatePages` folders use
+ * (which the static layer of `honoSvelte()` leaves to the app): served when `allow` says so, a 404 otherwise.
+ * Every other path goes on. In dev Vite serves the sources, so nothing reaches it.
+ */
+export function privateAssets(options: PrivateAssetsOptions): MiddlewareHandler {
+  let owners: Map<string, string[]> | undefined;
+  return async (c, next) => {
+    owners ??= privateAssetDirs(
+      options.manifest ?? autoClientManifest ?? {},
+      options.privatePages ?? metaOf(autoSsrPages).__privatePages ?? [],
+    );
+    const dirs = owners.get(c.req.path);
+    if (!dirs) return next();
+    if (!(await options.allow(c, dirs))) return c.notFound();
+    return options.serve(c, next);
+  };
+}
 
 export function shell(options: ShellOptions = {}) {
   const titleDefault = options.title ?? "App";

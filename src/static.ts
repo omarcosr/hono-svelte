@@ -21,6 +21,13 @@ export type StaticFilesOptions = {
   hashedPrefix?: string;
   /** `Cache-Control` of every other file (favicon, fonts from `publicDir`). @default CACHE_PUBLIC */
   cacheControl?: string;
+  /** `Cache-Control` of hashed files; `"private, …"` for files served behind a session. @default CACHE_IMMUTABLE */
+  hashedCacheControl?: string;
+  /**
+   * URL paths left to the app (`next()`), like source maps: the files only `privatePages` folders use, which
+   * the app serves after its own check (`privateAssets()`). `honoSvelte()` fills it from the client build.
+   */
+  privateFiles?: string[];
 };
 
 type ServeStaticOptions = {
@@ -48,12 +55,14 @@ export function staticFiles(
 ): MiddlewareHandler {
   const hashedPrefix = options.hashedPrefix ?? "/static/";
   const cacheControl = options.cacheControl ?? CACHE_PUBLIC;
+  const hashedCacheControl = options.hashedCacheControl ?? CACHE_IMMUTABLE;
+  const privateFiles = new Set(options.privateFiles ?? []);
   const serve = serveStatic({
     root: options.root ?? "./",
     precompressed: options.precompressed ?? true,
     onFound: (path, c) => {
       if (c.req.path.startsWith(hashedPrefix)) {
-        c.header("Cache-Control", CACHE_IMMUTABLE);
+        c.header("Cache-Control", hashedCacheControl);
         return;
       }
       const { size, mtimeMs } = statSync(path);
@@ -62,7 +71,7 @@ export function staticFiles(
     },
   });
   return async (c, next) => {
-    if (!options.sourcemaps && PRIVATE.test(c.req.path)) return next();
+    if ((!options.sourcemaps && PRIVATE.test(c.req.path)) || privateFiles.has(c.req.path)) return next();
     const res = (await serve(c, next)) || undefined;
     const tag = res?.headers.get("ETag");
     const ifNoneMatch = c.req.header("If-None-Match");

@@ -49,7 +49,7 @@ export type HonoSvelteOptions = PagesOptions & {
    * `.vite/` not served (`sourcemaps: true` serves the maps). `false` keeps
    * the plain serveStatic and skips precompression.
    */
-  staticFiles?: false | Omit<StaticFilesOptions, "root" | "hashedPrefix">;
+  staticFiles?: false | Omit<StaticFilesOptions, "root" | "hashedPrefix" | "privateFiles">;
   /**
    * Compile the app's components in runes mode, including those that use no
    * rune (Svelte would compile them in legacy mode and ship its legacy
@@ -202,13 +202,18 @@ export function precompress(): Plugin {
 }
 
 /** `@hono/vite-build` entry hook: `staticFiles()` on every static path, instead of its plain serveStatic. */
-export function staticFilesHook(runtime: HonoSvelteRuntime, options: StaticFilesOptions) {
+export function staticFilesHook(runtime: HonoSvelteRuntime, options: StaticFilesOptions, privateFiles: () => string[] = () => []) {
   const from = runtime === "bun" ? "hono/bun" : "@hono/node-server/serve-static";
+  // Read when the server entry is generated: the client build (and its manifest) is done by then.
+  const withPrivate = (): StaticFilesOptions => {
+    const files = privateFiles();
+    return files.length > 0 ? { ...options, privateFiles: files } : options;
+  };
   return (appName: string, hookOptions?: { staticPaths?: string[] }): string =>
     [
       `import { serveStatic } from '${from}'`,
       `import { staticFiles } from 'hono-svelte/static'`,
-      `const hsStaticFiles = staticFiles(serveStatic, ${JSON.stringify(options)})`,
+      `const hsStaticFiles = staticFiles(serveStatic, ${JSON.stringify(withPrivate())})`,
       ...(hookOptions?.staticPaths ?? []).map((p) => `${appName}.use(${JSON.stringify(p)}, hsStaticFiles)`),
     ].join("\n") + "\n";
 }
@@ -275,7 +280,7 @@ export function honoSvelte(options: HonoSvelteOptions = {}): HonoSvelteConfig {
         staticRoot: "./" + outDir,
         ...(staticOptions === false
           ? {}
-          : { entryContentBeforeHooks: [staticFilesHook(runtime, { ...staticOptions, root: "./" + outDir })] }),
+          : { entryContentBeforeHooks: [staticFilesHook(runtime, { ...staticOptions, root: "./" + outDir }, () => appPages.privateFiles())] }),
         ...options.build,
       }),
     ];

@@ -472,7 +472,7 @@ Vite plugin (`hono-svelte/vite`) that discovers pages and generates client entri
 | `stylesEntry` | — | Global stylesheet (e.g. `"src/app.css"`): `input()` adds it as `styles` and `shell()` uses it as its `stylesEntry` default — one place for the path. `false` = none, and the shell links no global sheet |
 | `hydrate` | `false` | Server-render interactive pages and hydrate them: `true` for all, or a list of entries — see [Server rendering interactive pages](#server-rendering-interactive-pages) |
 | `serverOnly` | `[]` | Extra server-only globs (relative to the Vite root) on top of `**/*.server.*` and `**/server/**`: client code reaching one fails the build and the dev client. `false` turns the check off |
-| `privatePages` | `[]` | Page folders only some users reach, e.g. `["admin"]`. Prefetch (`"hover"` map, inline map, `"all"`) never names their pages outside the folder, so public HTML and the public map don't list the admin's pages; the folder's own pages load a map with them. Their files stay public: protect the data on the server |
+| `privatePages` | `[]` | Page folders only some users reach, e.g. `["admin"]`. Prefetch (`"hover"` map, inline map, `"all"`) never names their pages outside the folder, so public HTML and the public map don't list the admin's pages; the folder's own pages load a map with them. In production the static layer also leaves the files only these folders use to the app, which serves them with [`privateAssets()`](#private-page-files) (otherwise they 404). Still protect the data on the server |
 
 Handy methods: `input()` (client build entries), `entries()` (all pages), `staticEntries()` (static pages only), `hasClient(entry)`, `layouts()`, `layoutChain(entry)`, `dataTypes()` (extracted `Data` declarations), `types()` (entry union), `typeDeclarations()` (hono module snippet), `dtsPath()` / `writeDts()` (generated `.d.ts`), `validateConfig()` (fail fast on bad Vite setup).
 
@@ -628,6 +628,27 @@ app.use("/static/*", staticFiles(serveStatic, { root: "./dist" }));
 ```
 
 A CDN in front (Cloudflare) keeps working: it honors `Cache-Control` and passes `Content-Encoding: br` through.
+
+### Private page files
+
+With `privatePages: ["admin"]`, the files of the client build that only those folders use — their entries and the chunks, CSS and assets nothing public reaches — are not served by the static layer: it leaves them to the app, like source maps. Serve them behind your own check with `privateAssets()`; everyone else gets a 404, as for a missing file. Files a public page also uses stay public.
+
+```ts
+import { privateAssets } from "hono-svelte";
+import { staticFiles } from "hono-svelte/static";
+import { serveStatic } from "hono/bun";
+
+app.use(
+  "/static/*",
+  privateAssets({
+    // `private`: a CDN must not keep a copy it would hand to anyone.
+    serve: staticFiles(serveStatic, { root: "./dist", hashedCacheControl: "private, max-age=31536000, immutable" }),
+    allow: (c, dirs) => isStaff(c), // dirs: the private folders using the file, e.g. ["admin"]
+  }),
+);
+```
+
+The bundles hold code, not data: this keeps the admin's screens and API calls out of anonymous hands, it does not replace the checks on the server. In dev Vite serves the sources and nothing reaches the middleware.
 
 ## Example
 

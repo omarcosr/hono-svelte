@@ -11,6 +11,7 @@ export type ViteManifestChunk = {
   css?: string[];
   imports?: string[];
   dynamicImports?: string[];
+  assets?: string[];
   isEntry?: boolean;
 };
 
@@ -136,6 +137,52 @@ export function manifestImportsFor(
       .filter((chunk) => chunk !== entry && chunk.file)
       .map((chunk) => joinPrefix(prefix, chunk.file)),
   );
+}
+
+const PRIVATE_PREFETCH = "hono-svelte/prefetch/";
+
+/** The page entry (or private prefetch map) a manifest key stands for: "admin/users", "hono-svelte/prefetch/admin.js" -> "admin". */
+function rootEntryOf(key: string): string | undefined {
+  const bare = (key.startsWith(NULL) ? key.slice(1) : key).replace(/^(\.\.\/)+/, "");
+  if (bare.startsWith(VIRTUAL_ENTRY)) return bare.slice(VIRTUAL_ENTRY.length);
+  if (bare.startsWith(PRIVATE_PREFETCH)) return bare.slice(PRIVATE_PREFETCH.length).replace(/\.js$/, "");
+  return undefined;
+}
+
+/**
+ * `privatePages` folders that reach each file of the client build only they use — their entries plus the
+ * chunks, CSS and assets those reach (statically or dynamically) that no other entry reaches — keyed by URL
+ * path ("/static/admin/users-x.js" -> ["admin"]). A file any public entry reaches stays public.
+ */
+export function privateAssetDirs(manifest: ViteManifest, privateDirs: string[], prefix = "/"): Map<string, string[]> {
+  const reach = (keys: string[]): Set<string> => {
+    const files = new Set<string>();
+    const seen = new Set<string>();
+    const visit = (key: string): void => {
+      const chunk = manifest[key];
+      if (!chunk || seen.has(key)) return;
+      seen.add(key);
+      for (const file of [chunk.file, ...(chunk.css ?? []), ...(chunk.assets ?? [])]) if (file) files.add(file);
+      for (const dep of [...(chunk.imports ?? []), ...(chunk.dynamicImports ?? [])]) visit(dep);
+    };
+    keys.forEach(visit);
+    return files;
+  };
+  const roots = Object.keys(manifest).filter((key) => manifest[key]?.isEntry || key.startsWith(PRIVATE_PREFETCH));
+  const dirOf = (key: string): string | undefined => {
+    const entry = rootEntryOf(key);
+    return entry === undefined ? undefined : privateDirs.find((dir) => entry === dir || entry.startsWith(dir + "/"));
+  };
+  const publicFiles = reach(roots.filter((key) => dirOf(key) === undefined));
+  const owners = new Map<string, string[]>();
+  for (const dir of privateDirs) {
+    for (const file of reach(roots.filter((key) => dirOf(key) === dir))) {
+      if (publicFiles.has(file)) continue;
+      const url = joinPrefix(prefix, file);
+      owners.set(url, [...(owners.get(url) ?? []), dir]);
+    }
+  }
+  return owners;
 }
 
 /** Long-term caching for hashed `/static` files. */
